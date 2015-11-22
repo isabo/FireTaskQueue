@@ -1,0 +1,34 @@
+{
+  "name": "fire-task-queue",
+  "version": "1.0.0",
+  "description": "A simple task queue for Firebase apps.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node_modules/.bin/tape test/test.js",
+    "build": "node build/build.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/isabo/FireTaskQueue.git"
+  },
+  "keywords": [
+    "Firebase",
+    "task",
+    "queue"
+  ],
+  "author": "Itzy Sabo",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/isabo/FireTaskQueue/issues"
+  },
+  "homepage": "https://github.com/isabo/FireTaskQueue#README",
+  "devDependencies": {
+    "closure-compiler": "git://github.com/isabo/node-closure.git#allow-newer-compiler",
+    "firebase-externs": "0.0.0",
+    "google-closure-compiler": "^20151015.0.0",
+    "tape": "^4.2.2"
+  },
+  "peerDependencies": {
+    "firebase": "^2.3.2"
+  }
+}
