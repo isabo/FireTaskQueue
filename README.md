@@ -76,13 +76,61 @@ q.dispose();
 FireTaskQueue.disposeAll();
 ```
 
-## Building
+### Prepare Your Firebase
+It would be a good idea to provide some rules for the queue functionality. Here's what I use:
+```js
+"queues": {
+
+    "$queueName": {
+
+        /**
+         * Only the server can read/write.
+         */
+        ".write": "auth !== null && auth.isSystem === true",
+        ".read": "auth !== null && auth.isSystem === true",
+
+        /**
+         * Add an index to help sort by time.
+         */
+        ".indexOn": "_dueAt",
+
+        /**
+         * Generic task definition.
+         */
+        "$taskId": {
+
+            /**
+             * Must have a _dueAt property.
+             */
+            ".validate": "newData.hasChildren(['_dueAt'])",
+
+            /**
+             * When the task should be executed.
+             */
+            "_dueAt": {
+                ".validate": "newData.exists() && newData.isNumber()"
+            },
+
+            /**
+             * The number of failed attempts made to execute this task.
+             */
+            "_attempts": {
+                ".validate": "newData.exists() && newData.isNumber() && newData.val() > 0"
+            }
+        }
+    }
+}
+```
+
+## Developers
+
+#### Build
 It's not really building in this case, just performing a static analysis of the source code.
 ```
 npm run build
 ```
 
-## Testing
+### Test
 Ensure that `FIREBASE_NAME` and `FIREBASE_TOKEN` environment variables have been set to appropriate
 values for accessing your Firebase instance.
 Then run:
