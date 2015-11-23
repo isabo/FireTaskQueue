@@ -2,7 +2,7 @@
   "name": "fire-task-queue",
   "version": "1.0.0",
   "description": "A simple task queue for Firebase apps.",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
     "test": "node_modules/.bin/tape test/test.js",
     "build": "node build/build.js"
