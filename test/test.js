@@ -123,7 +123,7 @@ function processesTasks() {
             var count = 0;
             q.monitor(function(id, task, done) {
                 console.log(task.name);
-                done(true);
+                done();
                 count++;
                 t.equal(task.name, 'task' + count, 'Processing task ' + count);
                 if (count === 2) {

@@ -221,14 +221,15 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
  *
  * @param {string} taskId The ID of the task in the queue.
  * @param {Object} taskData The task data taken from the queue.
- * @param {boolean} isProcessed Whether the consumer's callback succeeded in processing the task.
- *      If not, we schedule a retry.
+ * @param {*} retVal Whether the consumer's callback succeeded in processing the task. If not, we
+ *      schedule a retry.
+ *      undefined = succeeded, false or Error or anything else means it failed.
  * @return {!Promise}
  * @private
  */
-FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, isProcessed) {
+FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
 
-    if (!isProcessed) {
+    if (retVal !== undefined) {
         // Increment the number of failed attempts.
         var attempts = taskData[FireTaskQueue.ATTEMPTS_] || 0;
         taskData[FireTaskQueue.ATTEMPTS_] = attempts + 1;
