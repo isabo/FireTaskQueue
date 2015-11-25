@@ -237,6 +237,8 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
     // Schedule a query refresh for the future so we will get its child_added event again.
     var dueAt = /** @type {number} */(taskData[FireTaskQueue.DUE_AT_]);
     if (dueAt > Date.now()) {
+        FireTaskQueue.log_(this.name_ + ': Task ' + taskId + ' is not due until ' +
+            new Date(taskData[FireTaskQueue.DUE_AT_]), taskData);
         this.scheduleQueryRefresh_(dueAt);
     } else {
         try {
