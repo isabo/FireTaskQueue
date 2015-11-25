@@ -269,8 +269,8 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
     var self = this;
     if (retVal !== undefined) {
 
-        FireTaskQueue.log_(this.name_ + ': Task ' + taskId + ' failed, will reschedule:', taskData,
-            retVal);
+        FireTaskQueue.log_(this.name_ + ': Failed Task ' + taskId + ' - will reschedule:',
+            JSON.stringify(taskData), retVal);
 
         // Increment the number of failed attempts.
         var attempts = taskData[FireTaskQueue.ATTEMPTS_] || 0;
