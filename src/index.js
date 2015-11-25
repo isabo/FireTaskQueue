@@ -11,6 +11,8 @@ var Fbase = require('firebase'); // Can't name it Firebase - that clashes with f
  */
 var FireTaskQueue = function(name, ref) {
 
+    FireTaskQueue.log_(name + ': Creating queue instance at ' + ref.toString());
+
     /**
      * @type {string}
      * @private
@@ -82,11 +84,15 @@ var FireTaskQueue = function(name, ref) {
  */
 FireTaskQueue.prototype.dispose = function() {
 
+    FireTaskQueue.log_(this.name_ + ': Disposing queue instance');
+
     FireTaskQueue.unregisterQueue_(this);
 
     this.stopMonitoring_();
     delete this.processor_; // = null;
     delete this.ref_ //= null;
+
+    FireTaskQueue.log_(this.name_ + ': Queue instance disposed');
 };
 
 
@@ -111,6 +117,13 @@ FireTaskQueue.prototype.getName = function() {
  */
 FireTaskQueue.prototype.schedule = function(taskData, opt_when) {
 
+    if (taskData[FireTaskQueue.ATTEMPTS_]) {
+        FireTaskQueue.log_(this.name_ + ': Rescheduling a task after ' +
+            taskData[FireTaskQueue.ATTEMPTS_] + ' failed attempts:', taskData);
+    } else {
+        FireTaskQueue.log_(this.name_ + ': Scheduling a task ...', taskData);
+    }
+
     var self = this;
     return new Promise(function(resolve, reject) {
 
@@ -122,9 +135,22 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when) {
 
         var taskRef = self.ref_.push(taskData, function(/**!Error*/err) {
 
-            // TODO: logging!
+            if (!err) {
+                var msg;
+                if (opt_when) {
+                    msg = 'future execution at ' + new Date(opt_when);
+                } else {
+                    msg = 'immediate execution'
+                }
+                FireTaskQueue.log_(self.name_ + ': Scheduled a task for ' + msg +
+                    '[' + taskRef.key() + ']', taskData);
+                resolve(taskRef.key());
 
-            !err ? resolve(taskRef.key()) : reject(err);
+            } else {
+
+                FireTaskQueue.log_(self.name_ + ': ERROR while scheduling task:', taskData, err);
+                reject(err);
+            }
         });
     });
 };
@@ -143,6 +169,7 @@ FireTaskQueue.prototype.monitor = function(fn, opt_parallelCount) {
 
     if (opt_parallelCount) {
         this.parallelCount_ = opt_parallelCount;
+        FireTaskQueue.log_(this.name_ + ': Maximum parallel tasks set to ' + this.parallelCount_);
     }
 
     this.startMonitoring_();
@@ -158,10 +185,14 @@ FireTaskQueue.prototype.startMonitoring_ = function() {
 
     if (this.isMonitoring_) return;
 
+    FireTaskQueue.log_(this.name_ + ': Starting ...');
+
     // Our query will be a rolling window containing the first X tasks that need to be executed.
     this.query_ = this.ref_.orderByChild(FireTaskQueue.DUE_AT_).limitToFirst(this.parallelCount_);
     this.query_.on('child_added', this.processTask_, function(err){}, this);
     this.isMonitoring_ = true;
+
+    FireTaskQueue.log_(this.name_ + ': Started');
 };
 
 
@@ -174,6 +205,8 @@ FireTaskQueue.prototype.stopMonitoring_ = function() {
 
     if (!this.isMonitoring_) return;
 
+    FireTaskQueue.log_(this.name_ + ': Stopping ...');
+
     this.query_.off('child_added', this.processTask_, this);
     this.query_ = null;
 
@@ -182,6 +215,8 @@ FireTaskQueue.prototype.stopMonitoring_ = function() {
     }
 
     this.isMonitoring_ = false;
+
+    FireTaskQueue.log_(this.name_ + ': Stopped');
 };
 
 
@@ -196,6 +231,8 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
     var taskData = /** @type {!Object} */(snapshot.val());
     var taskId = snapshot.key();
 
+    FireTaskQueue.log_(this.name_ + ': Processing task ' + taskId + ' ...', taskData);
+
     // If the task is scheduled for later than now, ignore it. But when will we catch it again?
     // Schedule a query refresh for the future so we will get its child_added event again.
     var dueAt = /** @type {number} */(taskData[FireTaskQueue.DUE_AT_]);
@@ -209,7 +246,7 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
                 this.finishTask_.bind(this, taskId, taskData));
         } catch (err) {
             // Consumer's processor method threw an exception, i.e. it failed. Schedule a retry.
-            this.finishTask_(taskId, taskData, false);
+            this.finishTask_(taskId, taskData, err);
         }
     }
 };
@@ -220,7 +257,7 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
  * increasing deadline.
  *
  * @param {string} taskId The ID of the task in the queue.
- * @param {Object} taskData The task data taken from the queue.
+ * @param {!Object} taskData The task data taken from the queue.
  * @param {*} retVal Whether the consumer's callback succeeded in processing the task. If not, we
  *      schedule a retry.
  *      undefined = succeeded, false or Error or anything else means it failed.
@@ -229,7 +266,12 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
  */
 FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
 
+    var self = this;
     if (retVal !== undefined) {
+
+        FireTaskQueue.log_(this.name_ + ': Task ' + taskId + ' failed, will reschedule:', taskData,
+            retVal);
+
         // Increment the number of failed attempts.
         var attempts = taskData[FireTaskQueue.ATTEMPTS_] || 0;
         taskData[FireTaskQueue.ATTEMPTS_] = attempts + 1;
@@ -238,17 +280,32 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
         var delay = Math.pow(2, attempts) * FireTaskQueue.MIN_FAILURE_DELAY;
         var when = Date.now() + delay;
         var p = this.schedule(taskData, when).
-            then(null, function() {
-                // TODO: Logging - failed to reschedule.
+            then(null, function(err) {
+                FireTaskQueue.log_(self.name_ +
+                        ': Failed to reschedule task, the original will eventually be reprocessed:',
+                        taskData, err);
+                throw err;
             });
+    } else {
+        FireTaskQueue.log_(this.name_ +
+                ': Task ' + taskId + ' was executed successfully', taskData);
     }
 
     // If rescheduling, delete the task only if we have successfully rescheduled.
-    var self = this;
     p = p || Promise.resolve();
     return p.then(function() {
-        return self.ref_.child(taskId).remove(function(/**!Error*/err) {
-            // TODO: logging!
+        FireTaskQueue.log_(self.name_ + ': Deleting task ' + taskId + ' ...', taskData);
+        return self.ref_.child(taskId).remove(function(/** Error */err) {
+            if (!err) {
+                FireTaskQueue.log_(self.name_ + ': Task ' + taskId + ' deleted successfully',
+                    taskData);
+            } else {
+                FireTaskQueue.log_(self.name_ +
+                        ': Failed to delete task - it will eventually be processed again',
+                        taskData, err);
+                // Don't rethrow the error - it won't stop the task getting reprocessed sooner or
+                // later.
+            }
         });
     });
 };
@@ -276,6 +333,9 @@ FireTaskQueue.prototype.scheduleQueryRefresh_ = function(dueAt) {
         var millisecondsToWait = dueAt - Date.now(); // both are UTC - good
         this.queryRefreshHandle_ = setTimeout(this.refreshQuery_.bind(this), millisecondsToWait);
         this.queryRefreshTime_ = dueAt;
+
+        FireTaskQueue.log_(this.name_ + ': Query will be refreshed at ' +
+            new Date(this.queryRefreshTime_));
     }
 };
 
@@ -287,9 +347,13 @@ FireTaskQueue.prototype.scheduleQueryRefresh_ = function(dueAt) {
  */
 FireTaskQueue.prototype.cancelQueryRefresh_ = function() {
 
-    this.queryRefreshTime_ = null;
     clearTimeout(this.queryRefreshHandle_);
+    FireTaskQueue.log_(this.name_ + ': Query refresh cancelled at ' +
+        new Date(this.queryRefreshTime_));
+
     this.queryRefreshHandle_ = null;
+    this.queryRefreshTime_ = null;
+
 };
 
 
@@ -301,8 +365,12 @@ FireTaskQueue.prototype.cancelQueryRefresh_ = function() {
  */
 FireTaskQueue.prototype.refreshQuery_ = function() {
 
+    FireTaskQueue.log_(this.name_ + ': Refreshing query ...');
+
     this.stopMonitoring_();
     this.startMonitoring_();
+
+    FireTaskQueue.log_(this.name_ + ': Query refreshed');
 };
 
 
@@ -352,6 +420,15 @@ FireTaskQueue.DUE_AT_ = '_dueAt';
  * @private
  */
 FireTaskQueue.ATTEMPTS_ = '_attempts';
+
+
+/**
+ * The prefix of all log entries we write.
+ *
+ * @const {string}
+ * @private
+ */
+FireTaskQueue.LOG_PREFIX_ = 'FIRE_TASK_QUEUE:';
 
 
 /**
@@ -441,6 +518,20 @@ FireTaskQueue.disposeAll = function() {
     for (var name in FireTaskQueue.instances_) {
         FireTaskQueue.instances_[name].dispose();
     }
+};
+
+
+/**
+ * Standard logging method.
+ *
+ * @param {...} var_args
+ * @private
+ */
+FireTaskQueue.log_ = function(var_args) {
+
+    var args = Array.prototype.slice.call(arguments, 0);
+    args.unshift(FireTaskQueue.LOG_PREFIX_);
+    console.log.apply(console, args);
 };
 
 
