@@ -50,6 +50,24 @@ var FireTaskQueue = function(name, ref) {
     this.parallelCount_ = FireTaskQueue.DEFAULT_PARALLEL_COUNT;
 
     /**
+     * The minimum time (milliseconds) to wait before reattempting to process a task after
+     * processing failed.
+     *
+     * @type {number}
+     * @private
+     */
+    this.minBackOff_ = FireTaskQueue.DEFAULT_MIN_FAILURE_BACKOFF;
+
+    /**
+     * The maximum time (milliseconds) to wait before reattempting to process a task after
+     * processing failed.
+     *
+     * @type {number}
+     * @private
+     */
+    this.maxBackOff_ = FireTaskQueue.DEFAULT_MAX_FAILURE_BACKOFF;
+
+    /**
      * Whether this queue is being monitored by the current process. In order to schedule tasks,
      * the queue needs to be instantiated, but not necessarily monitored.
      *
@@ -162,14 +180,28 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when) {
  *
  * @param {ProcessorFn} fn
  * @param {number=} opt_parallelCount The number of tasks that are allowed execute in parallel.
+ * @param {number=} opt_maxBackOff Failed tasks should be retried at intervals no larger than this
+ *  (microseconds).
+ * @param {number=} opt_minBackOff Failed tasks should be retried at intervals no smaller than this
+ *  (microseconds).
  */
-FireTaskQueue.prototype.monitor = function(fn, opt_parallelCount) {
+FireTaskQueue.prototype.monitor = function(fn, opt_parallelCount, opt_maxBackOff, opt_minBackOff) {
 
     this.processor_ = fn;
 
     if (opt_parallelCount) {
         this.parallelCount_ = opt_parallelCount;
         FireTaskQueue.log_(this.name_ + ': Maximum parallel tasks set to ' + this.parallelCount_);
+    }
+
+    if (opt_maxBackOff) {
+        this.maxBackOff_ = opt_maxBackOff;
+        FireTaskQueue.log_(this.name_ + ': Maximum backoff set to ' + this.maxBackOff_ + ' ms');
+    }
+
+    if (opt_minBackOff) {
+        this.minBackOff_ = opt_minBackOff;
+        FireTaskQueue.log_(this.name_ + ': Minimum backoff set to ' + this.minBackOff_ + ' ms');
     }
 
     this.startMonitoring_();
@@ -279,7 +311,8 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
         taskData[FireTaskQueue.ATTEMPTS_] = attempts + 1;
 
         // Reschedule based on the number of attempts.
-        var delay = Math.pow(2, attempts) * FireTaskQueue.MIN_FAILURE_DELAY;
+        var delay = Math.pow(2, attempts) * this.minBackOff_;
+        delay = Math.min(delay, this.maxBackOff_);
         var when = Date.now() + delay;
         var p = this.schedule(taskData, when).
             then(null, function(err) {
@@ -397,12 +430,21 @@ FireTaskQueue.DEFAULT_PARALLEL_COUNT = 5;
 
 
 /**
- * The minimum time (milliseconds) to wait before reattempting to process a task after processing
- * failed.
+ * The default minimum time (milliseconds) to wait before reattempting to process a task after
+ * processing failed.
  *
  * @const {number}
  */
-FireTaskQueue.MIN_FAILURE_DELAY = 250;
+FireTaskQueue.DEFAULT_MIN_FAILURE_BACKOFF = 250;
+
+
+/**
+ * The default maximum time (milliseconds) to wait before reattempting to process a task after
+ * processing failed.
+ *
+ * @const {number}
+ */
+FireTaskQueue.DEFAULT_MAX_FAILURE_BACKOFF = 3600000; // 1 hour.
 
 
 /**
