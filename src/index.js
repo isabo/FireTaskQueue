@@ -542,8 +542,12 @@ FireTaskQueue.unregisterQueue_ = function(queue) {
  * @param {string} queueName The name of the queue.
  * @param {ProcessorFn} fn A function that processes a task from the queue.
  * @param {number=} opt_parallelCount The number of tasks that are allowed to execute in parallel.
+ * @param {number=} opt_maxBackOff Failed tasks should be retried at intervals no larger than this
+ *  (microseconds).
+ * @param {number=} opt_minBackOff Failed tasks should be retried at intervals no smaller than this
+ *  (microseconds).
  */
-FireTaskQueue.monitor = function(queueName, fn, opt_parallelCount) {
+FireTaskQueue.monitor = function(queueName, fn, opt_parallelCount, opt_maxBackOff, opt_minBackOff) {
 
     var q = FireTaskQueue.get(queueName);
     if (q) {
