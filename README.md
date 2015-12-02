@@ -5,10 +5,10 @@ separate queue service such as RabbitMQ at an early stage.
 
 ## Rules
 - A task is an object that holds information that is meaningful to your app. The object's properties
-  must be storable in Firebase.
+  and values must be compatible with what Firebase supports, i.e., values must be primitives.
 - Tasks can be submitted for immediate execution or for execution at a specific time (i.e. delayed
   execution).
-- Tasks are not necessarily processed in the order they were submitted, but that is the general
+- Tasks are not guaranteed to be processed in the order they were submitted, but that is the general
   intention.
 - Tasks cannot have multiple user-defined statuses. They are either in the queue, i.e. not yet
   processed, or are not in the queue, i.e. processed successfully then deleted.
@@ -59,7 +59,7 @@ q.monitor(function(taskId, taskData, done) {
 
     // You can even do something asynchronous, as long as you remember to call done().
     setTimeout(function() {
-        done(true);
+        done();
     }, 500);
 });
 
