@@ -178,7 +178,10 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when) {
  * Registers a callback function that will be called for each task in the queue and starts
  * monitoring.
  *
- * @param {ProcessorFn} fn
+ * @param {ProcessorFn} fn A function that processes a task from the queue. It should accept the
+ *      following arguments: id {string}, task {!Object}, done {function(*)}
+ *      When processing is complete, done() should be called without arguments to indicate success,
+ *      and with an error or any other value except undefined and null to indicate failure.
  * @param {number=} opt_parallelCount The number of tasks that are allowed execute in parallel.
  * @param {number=} opt_maxBackOff Failed tasks should be retried at intervals no larger than this
  *  (microseconds).
@@ -540,7 +543,10 @@ FireTaskQueue.unregisterQueue_ = function(queue) {
  * Registers a function that will be called for each task in the queue, and starts processing tasks.
  *
  * @param {string} queueName The name of the queue.
- * @param {ProcessorFn} fn A function that processes a task from the queue.
+ * @param {ProcessorFn} fn A function that processes a task from the queue. It should accept the
+ *      following arguments: id {string}, task {!Object}, done {function(*)}
+ *      When processing is complete, done() should be called without arguments to indicate success,
+ *      and with an error or any other value except undefined and null to indicate failure.
  * @param {number=} opt_parallelCount The number of tasks that are allowed to execute in parallel.
  * @param {number=} opt_maxBackOff Failed tasks should be retried at intervals no larger than this
  *  (microseconds).
@@ -584,12 +590,12 @@ FireTaskQueue.log_ = function(var_args) {
 
 
 /**
- * Processor functions should accept a data argument and a second argument that is a function that
- * should be called when the processing is complete. If the function is called with true, the item
- * is considered to have been processed and will be deleted from the queue. If called with false,
- * It will remain in the queue, but get an updated due time.
+ * Processor functions should accept a task ID, a task data argument and a final argument that is a
+ * callback function for the consumer to call when the processing is complete. If any value apart
+ * from undefined or null is passed to the callback, the task is considered to have failed and
+ * will be retried after an appropriate interval.
  *
- * @typedef {function(string, !Object, function(boolean))}
+ * @typedef {function(string, !Object, function(*))}
  */
 var ProcessorFn;
 
