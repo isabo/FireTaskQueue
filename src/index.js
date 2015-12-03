@@ -542,7 +542,9 @@ FireTaskQueue.unregisterQueue_ = function(queue) {
 /**
  * Registers a function that will be called for each task in the queue, and starts processing tasks.
  *
- * @param {string} queueName The name of the queue.
+ * @param {!Firebase|string} queueRefOrName The Firebase reference of the queue or its name. If passing a
+ *      ref, the queue will be created if it does not yet exist. Passing a name is for queues that
+ *      already exist.
  * @param {ProcessorFn} fn A function that processes a task from the queue. It should accept the
  *      following arguments: id {string}, task {!Object}, done {function(*)}
  *      When processing is complete, done() should be called without arguments to indicate success,
@@ -553,14 +555,31 @@ FireTaskQueue.unregisterQueue_ = function(queue) {
  * @param {number=} opt_minBackOff Failed tasks should be retried at intervals no smaller than this
  *  (microseconds).
  */
-FireTaskQueue.monitor = function(queueName, fn, opt_parallelCount, opt_maxBackOff, opt_minBackOff) {
+FireTaskQueue.monitor = function(queueRefOrName, fn, opt_parallelCount, opt_maxBackOff,
+        opt_minBackOff) {
 
-    var q = FireTaskQueue.get(queueName);
-    if (q) {
-        return q.monitor(fn, opt_parallelCount);
-    } else {
-        return Promise.reject(new Error('No such queue'));
+    var q;
+    if (typeof queueRefOrName === 'string') {
+
+        q = FireTaskQueue.get(queueRefOrName);
+        if (!q) {
+            return Promise.reject(new Error('No such queue'));
+        }
+
+    } else if (queueRefOrName instanceof Fbase) {
+
+        var name = queueRefOrName.key();
+        q = FireTaskQueue.get(name);
+        if (!q) {
+            q = new FireTaskQueue(name, queueRefOrName);
+        }
     }
+
+    if (!q) {
+        return Promise.reject(new Error('queueRefOrName must be a Firebase reference or a string'));
+    }
+
+    return q.monitor(fn, opt_parallelCount, opt_maxBackOff, opt_minBackOff);
 };
 
 
