@@ -50,6 +50,24 @@ var FireTaskQueue = function(name, ref) {
     this.parallelCount_ = FireTaskQueue.DEFAULT_PARALLEL_COUNT;
 
     /**
+     * The minimum time (milliseconds) to wait before reattempting to process a task after
+     * processing failed.
+     *
+     * @type {number}
+     * @private
+     */
+    this.minBackOff_ = FireTaskQueue.DEFAULT_MIN_FAILURE_BACKOFF;
+
+    /**
+     * The maximum time (milliseconds) to wait before reattempting to process a task after
+     * processing failed.
+     *
+     * @type {number}
+     * @private
+     */
+    this.maxBackOff_ = FireTaskQueue.DEFAULT_MAX_FAILURE_BACKOFF;
+
+    /**
      * Whether this queue is being monitored by the current process. In order to schedule tasks,
      * the queue needs to be instantiated, but not necessarily monitored.
      *
@@ -160,16 +178,33 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when) {
  * Registers a callback function that will be called for each task in the queue and starts
  * monitoring.
  *
- * @param {ProcessorFn} fn
+ * @param {ProcessorFn} fn A function that processes a task from the queue. It should accept the
+ *      following arguments: id {string}, task {!Object}, done {function(*)}
+ *      When processing is complete, done() should be called without arguments to indicate success,
+ *      and with an error or any other value except undefined and null to indicate failure.
  * @param {number=} opt_parallelCount The number of tasks that are allowed execute in parallel.
+ * @param {number=} opt_maxBackOff Failed tasks should be retried at intervals no larger than this
+ *  (microseconds).
+ * @param {number=} opt_minBackOff Failed tasks should be retried at intervals no smaller than this
+ *  (microseconds).
  */
-FireTaskQueue.prototype.monitor = function(fn, opt_parallelCount) {
+FireTaskQueue.prototype.monitor = function(fn, opt_parallelCount, opt_maxBackOff, opt_minBackOff) {
 
     this.processor_ = fn;
 
     if (opt_parallelCount) {
         this.parallelCount_ = opt_parallelCount;
         FireTaskQueue.log_(this.name_ + ': Maximum parallel tasks set to ' + this.parallelCount_);
+    }
+
+    if (opt_maxBackOff) {
+        this.maxBackOff_ = opt_maxBackOff;
+        FireTaskQueue.log_(this.name_ + ': Maximum backoff set to ' + this.maxBackOff_ + ' ms');
+    }
+
+    if (opt_minBackOff) {
+        this.minBackOff_ = opt_minBackOff;
+        FireTaskQueue.log_(this.name_ + ': Minimum backoff set to ' + this.minBackOff_ + ' ms');
     }
 
     this.startMonitoring_();
@@ -279,7 +314,8 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
         taskData[FireTaskQueue.ATTEMPTS_] = attempts + 1;
 
         // Reschedule based on the number of attempts.
-        var delay = Math.pow(2, attempts) * FireTaskQueue.MIN_FAILURE_DELAY;
+        var delay = Math.pow(2, attempts) * this.minBackOff_;
+        delay = Math.min(delay, this.maxBackOff_);
         var when = Date.now() + delay;
         var p = this.schedule(taskData, when).
             then(null, function(err) {
@@ -397,12 +433,21 @@ FireTaskQueue.DEFAULT_PARALLEL_COUNT = 5;
 
 
 /**
- * The minimum time (milliseconds) to wait before reattempting to process a task after processing
- * failed.
+ * The default minimum time (milliseconds) to wait before reattempting to process a task after
+ * processing failed.
  *
  * @const {number}
  */
-FireTaskQueue.MIN_FAILURE_DELAY = 250;
+FireTaskQueue.DEFAULT_MIN_FAILURE_BACKOFF = 250;
+
+
+/**
+ * The default maximum time (milliseconds) to wait before reattempting to process a task after
+ * processing failed.
+ *
+ * @const {number}
+ */
+FireTaskQueue.DEFAULT_MAX_FAILURE_BACKOFF = 3600000; // 1 hour.
 
 
 /**
@@ -497,18 +542,44 @@ FireTaskQueue.unregisterQueue_ = function(queue) {
 /**
  * Registers a function that will be called for each task in the queue, and starts processing tasks.
  *
- * @param {string} queueName The name of the queue.
- * @param {ProcessorFn} fn A function that processes a task from the queue.
+ * @param {!Firebase|string} queueRefOrName The Firebase reference of the queue or its name. If passing a
+ *      ref, the queue will be created if it does not yet exist. Passing a name is for queues that
+ *      already exist.
+ * @param {ProcessorFn} fn A function that processes a task from the queue. It should accept the
+ *      following arguments: id {string}, task {!Object}, done {function(*)}
+ *      When processing is complete, done() should be called without arguments to indicate success,
+ *      and with an error or any other value except undefined and null to indicate failure.
  * @param {number=} opt_parallelCount The number of tasks that are allowed to execute in parallel.
+ * @param {number=} opt_maxBackOff Failed tasks should be retried at intervals no larger than this
+ *  (microseconds).
+ * @param {number=} opt_minBackOff Failed tasks should be retried at intervals no smaller than this
+ *  (microseconds).
  */
-FireTaskQueue.monitor = function(queueName, fn, opt_parallelCount) {
+FireTaskQueue.monitor = function(queueRefOrName, fn, opt_parallelCount, opt_maxBackOff,
+        opt_minBackOff) {
 
-    var q = FireTaskQueue.get(queueName);
-    if (q) {
-        return q.monitor(fn, opt_parallelCount);
-    } else {
-        return Promise.reject(new Error('No such queue'));
+    var q;
+    if (typeof queueRefOrName === 'string') {
+
+        q = FireTaskQueue.get(queueRefOrName);
+        if (!q) {
+            return Promise.reject(new Error('No such queue'));
+        }
+
+    } else if (queueRefOrName instanceof Fbase) {
+
+        var name = queueRefOrName.key();
+        q = FireTaskQueue.get(name);
+        if (!q) {
+            q = new FireTaskQueue(name, queueRefOrName);
+        }
     }
+
+    if (!q) {
+        return Promise.reject(new Error('queueRefOrName must be a Firebase reference or a string'));
+    }
+
+    return q.monitor(fn, opt_parallelCount, opt_maxBackOff, opt_minBackOff);
 };
 
 
@@ -538,12 +609,12 @@ FireTaskQueue.log_ = function(var_args) {
 
 
 /**
- * Processor functions should accept a data argument and a second argument that is a function that
- * should be called when the processing is complete. If the function is called with true, the item
- * is considered to have been processed and will be deleted from the queue. If called with false,
- * It will remain in the queue, but get an updated due time.
+ * Processor functions should accept a task ID, a task data argument and a final argument that is a
+ * callback function for the consumer to call when the processing is complete. If any value apart
+ * from undefined or null is passed to the callback, the task is considered to have failed and
+ * will be retried after an appropriate interval.
  *
- * @typedef {function(string, !Object, function(boolean))}
+ * @typedef {function(string, !Object, function(*))}
  */
 var ProcessorFn;
 
