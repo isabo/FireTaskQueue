@@ -26,6 +26,14 @@ var FireTaskQueue = function(name, ref) {
     this.ref_ = ref;
 
     /**
+     * The path to the queue relative to the root of the database.
+     *
+     * @type {string}
+     * @private
+     */
+    this.path_ = this.getInternalPath_();
+
+    /**
      * The query that returns tasks that need to be processed.
      *
      * @type {Firebase.Query}
@@ -130,16 +138,17 @@ FireTaskQueue.prototype.getName = function() {
  *
  * @param {!Object} taskData A task that needs to be processed.
  * @param {Date|number=} opt_when When to try to process the task (not before).
+ * @param {string=} opt_failedId_ If scheduling a retry, the ID of the failed task. For internal use.
  * @return {!Promise<string,Error>} which resolves to the reference of the newly created task if
  *      successful or is rejected if not.
  */
-FireTaskQueue.prototype.schedule = function(taskData, opt_when) {
+FireTaskQueue.prototype.schedule = function(taskData, opt_when, opt_failedId_) {
 
-    if (taskData[FireTaskQueue.ATTEMPTS_]) {
-        FireTaskQueue.log_(this.name_ + ': Rescheduling a task after ' +
-            taskData[FireTaskQueue.ATTEMPTS_] + ' failed attempts:', taskData);
-    } else {
+    if (!opt_failedId_) {
         FireTaskQueue.log_(this.name_ + ': Scheduling a task ...', taskData);
+    } else {
+        FireTaskQueue.log_(this.name_ + ': Rescheduling a task after ' +
+            taskData[FireTaskQueue.TaskProperties.ATTEMPTS] + ' failed attempts:', taskData);
     }
 
     var self = this;
@@ -149,9 +158,19 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when) {
         if (opt_when && typeof opt_when.getTime === 'function') {
             opt_when = opt_when.getTime();
         }
-        taskData[FireTaskQueue.DUE_AT_] = opt_when || Fbase.ServerValue.TIMESTAMP;
+        taskData[FireTaskQueue.TaskProperties.DUE_AT] = opt_when || Fbase.ServerValue.TIMESTAMP;
 
-        var taskRef = self.ref_.push(taskData, function(/**!Error*/err) {
+        // Generate an ID for the new task.
+        var taskId = self.ref_.push().key();
+
+        // Create the new task and if necessary delete the failed task in one operation. This
+        // requires an update operation relative to the root.
+        var data = {}
+        data[self.path_ + '/' + taskId] = taskData;
+        if (opt_failedId_) {
+            data[self.path_ + '/' + opt_failedId_] = null;
+        }
+        self.ref_.root().update(data, function(/**!Error*/err) {
 
             if (!err) {
                 var msg;
@@ -161,8 +180,8 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when) {
                     msg = 'immediate execution'
                 }
                 FireTaskQueue.log_(self.name_ + ': Scheduled a task for ' + msg +
-                    '[' + taskRef.key() + ']', taskData);
-                resolve(taskRef.key());
+                    '[' + taskId + ']', taskData);
+                resolve(taskId);
 
             } else {
 
@@ -212,6 +231,20 @@ FireTaskQueue.prototype.monitor = function(fn, opt_parallelCount, opt_maxBackOff
 
 
 /**
+ * Determine the path of the queue relative to the Firebase root, i.e. without the
+ * https://xyz.firebaseio.com/ at the beginning.
+ *
+ * @return {string}
+ * @private
+ */
+FireTaskQueue.prototype.getInternalPath_ = function() {
+
+    var l = this.ref_.root().toString().length;
+    return this.ref_.toString().slice(l);
+};
+
+
+/**
  * Executes a Firebase query that will call us back for each task in the queue.
  *
  * @private
@@ -223,7 +256,7 @@ FireTaskQueue.prototype.startMonitoring_ = function() {
     FireTaskQueue.log_(this.name_ + ': Starting ...');
 
     // Our query will be a rolling window containing the first X tasks that need to be executed.
-    this.query_ = this.ref_.orderByChild(FireTaskQueue.DUE_AT_).limitToFirst(this.parallelCount_);
+    this.query_ = this.ref_.orderByChild(FireTaskQueue.TaskProperties.DUE_AT).limitToFirst(this.parallelCount_);
     this.query_.on('child_added', this.processTask_, function(err){}, this);
     this.isMonitoring_ = true;
 
@@ -270,10 +303,10 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
 
     // If the task is scheduled for later than now, ignore it. But when will we catch it again?
     // Schedule a query refresh for the future so we will get its child_added event again.
-    var dueAt = /** @type {number} */(taskData[FireTaskQueue.DUE_AT_]);
+    var dueAt = /** @type {number} */(taskData[FireTaskQueue.TaskProperties.DUE_AT]);
     if (dueAt > Date.now()) {
         FireTaskQueue.log_(this.name_ + ': Task ' + taskId + ' is not due until ' +
-            new Date(taskData[FireTaskQueue.DUE_AT_]), taskData);
+            new Date(taskData[FireTaskQueue.TaskProperties.DUE_AT]), taskData);
         this.scheduleQueryRefresh_(dueAt);
     } else {
         try {
@@ -304,20 +337,20 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
 FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
 
     var self = this;
-    if (retVal !== undefined) {
+    if (retVal !== undefined && retVal !== null) {
 
         FireTaskQueue.log_(this.name_ + ': Failed Task ' + taskId + ' - will reschedule:',
             JSON.stringify(taskData), retVal);
 
         // Increment the number of failed attempts.
-        var attempts = taskData[FireTaskQueue.ATTEMPTS_] || 0;
-        taskData[FireTaskQueue.ATTEMPTS_] = attempts + 1;
+        var attempts = taskData[FireTaskQueue.TaskProperties.ATTEMPTS] || 0;
+        taskData[FireTaskQueue.TaskProperties.ATTEMPTS] = attempts + 1;
 
-        // Reschedule based on the number of attempts.
+        // Reschedule based on the number of attempts. This will also delete the original.
         var delay = Math.pow(2, attempts) * this.minBackOff_;
         delay = Math.min(delay, this.maxBackOff_);
         var when = Date.now() + delay;
-        var p = this.schedule(taskData, when).
+        return this.schedule(taskData, when, taskId).
             then(null, function(err) {
                 FireTaskQueue.log_(self.name_ +
                         ': Failed to reschedule task, the original will eventually be reprocessed:',
@@ -327,11 +360,7 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
     } else {
         FireTaskQueue.log_(this.name_ +
                 ': Task ' + taskId + ' was executed successfully', taskData);
-    }
 
-    // If rescheduling, delete the task only if we have successfully rescheduled.
-    p = p || Promise.resolve();
-    return p.then(function() {
         FireTaskQueue.log_(self.name_ + ': Deleting task ' + taskId + ' ...', taskData);
         return self.ref_.child(taskId).remove(function(/** Error */err) {
             if (!err) {
@@ -345,7 +374,7 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
                 // later.
             }
         });
-    });
+    }
 };
 
 
@@ -450,23 +479,25 @@ FireTaskQueue.DEFAULT_MIN_FAILURE_BACKOFF = 250;
 FireTaskQueue.DEFAULT_MAX_FAILURE_BACKOFF = 3600000; // 1 hour.
 
 
-/**
- * The name of the property in which we store the due date of the task.
- *
- * @const {string}
- * @private
- */
-FireTaskQueue.DUE_AT_ = '_dueAt';
-
 
 /**
- * The name of the property in which we store the number of times a task has been processed, if it
- * fails.
+ * The names of the reserved properties that this library uses.
  *
- * @const {string}
+ * @enum {string}
  * @private
  */
-FireTaskQueue.ATTEMPTS_ = '_attempts';
+FireTaskQueue.TaskProperties = {
+    /**
+     * The due date of the task.
+     */
+    DUE_AT: '_dueAt',
+
+    /**
+     * The number of times a task has been processed, if it fails.
+     */
+    ATTEMPTS: '_attempts',
+
+}
 
 
 /**
