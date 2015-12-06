@@ -346,6 +346,9 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
         var attempts = taskData[FireTaskQueue.TaskProperties.ATTEMPTS] || 0;
         taskData[FireTaskQueue.TaskProperties.ATTEMPTS] = attempts + 1;
 
+        // Serialize the error value.
+        taskData[FireTaskQueue.TaskProperties.ERROR] = this.prepareErrorValue_(retVal);
+
         // Reschedule based on the number of attempts. This will also delete the original.
         var delay = Math.pow(2, attempts) * this.minBackOff_;
         delay = Math.min(delay, this.maxBackOff_);
@@ -377,6 +380,99 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
     }
 };
 
+
+/**
+ * When the consumer's callback returns/throws a value, we try to store it in Firebase. If we can
+ * use it as-is, we will. Otherwise, we'll try to serialize it if it helps us.
+ *
+ * @param {*} errVal The value returned by the consumer's callback.
+ * @return {Firebase.Value}
+ * @private
+ */
+FireTaskQueue.prototype.prepareErrorValue_ = function(errVal) {
+
+    switch (typeof errVal) {
+
+        case 'string':
+        case 'number':
+        case 'boolean':
+            return errVal;
+
+        case 'object':
+            // Special handling for errors, because they don't output rich info in .toString() and
+            // the useful properties are not iterable.
+            if (errVal instanceof Error) {
+                var v = /** @type {!Error} */(errVal);
+                var e = {
+                    'name': v.name || '',
+                    'message': v.message || ''
+                }
+                if (v.stack) {
+                    e['stack'] = v.stack;
+                }
+                return e;
+            }
+
+            if (typeof errVal.toJson === 'function') {
+                return errVal.toJson();
+            }
+
+            // If it has a non-default toString method, use it.
+            if (typeof errVal.toString === 'function' &&
+                    errVal.toString !== Object.prototype.toString) {
+                return errVal.toString();
+            }
+
+            if (isStorable(errVal)) {
+                return /** @type {Firebase.Value} */(errVal);
+            }
+
+            // Reaching here means we've received a value that the consumer did not plan for.
+            return errVal.toString();
+
+        default:
+            return null;
+    }
+
+    /**
+     * Determines whether a value is a primitive, i.e. likely to be storable in Firebase.
+     *
+     * @param {*} val
+     * @return {boolean}
+     */
+    function isStorable(val) {
+
+        switch (typeof val) {
+
+            case 'string':
+            case 'number':
+            case 'boolean':
+                return true;
+
+            case 'undefined':
+            case 'symbol':
+                // These values will cause problems in Firebase.
+                return false;
+
+            case 'object':
+                // typeof null === 'object'
+                if (val === null) {
+                    return true;
+                }
+
+                // Does it have at least one property that Firebase can store?
+                for (var p in val) {
+                    if (isStorable(val[p])) {
+                        return true;
+                    }
+                }
+                return false; // No storable properties --> nothing will be stored.
+
+            default:
+                return false;
+        }
+    }
+};
 
 /**
  * If we encounter a future task when processing the queue, we need to revisit it at the appointed
@@ -497,6 +593,10 @@ FireTaskQueue.TaskProperties = {
      */
     ATTEMPTS: '_attempts',
 
+    /**
+     * The error value returned from the last failure.
+     */
+    ERROR: '_error'
 }
 
 
