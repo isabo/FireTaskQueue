@@ -4,7 +4,7 @@
   "description": "A simple task queue for Firebase apps.",
   "main": "src/index.js",
   "scripts": {
-    "test": "node_modules/.bin/tape test/test.js",
+    "test": "node_modules/.bin/tape test/test.js | node_modules/.bin/faucet",
     "build": "node build/build.js"
   },
   "repository": {
@@ -24,6 +24,7 @@
   "homepage": "https://github.com/isabo/FireTaskQueue#README",
   "devDependencies": {
     "closure-compiler": "git://github.com/isabo/node-closure.git#allow-newer-compiler",
+    "faucet": "0.0.1",
     "firebase-externs": "0.0.0",
     "google-closure-compiler": "^20151015.0.0",
     "tape": "^4.2.2"
