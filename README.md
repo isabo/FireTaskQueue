@@ -131,8 +131,8 @@ npm run build
 ```
 
 ### Test
-Ensure that `FIREBASE_NAME` and `FIREBASE_TOKEN` environment variables have been set to appropriate
-values for accessing your Firebase instance.
+Ensure that `FTQ_FIREBASE_NAME` and `FTQ_FIREBASE_TOKEN` environment variables have been set to
+appropriate values for accessing your Firebase instance.
 Then run:
 ```
 npm test
