@@ -305,10 +305,13 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
     // Schedule a query refresh for the future so we will get its child_added event again.
     var dueAt = /** @type {number} */(taskData[FireTaskQueue.TaskProperties.DUE_AT]);
     if (dueAt > Date.now()) {
+
         FireTaskQueue.log_(this.name_ + ': Task ' + taskId + ' is not due until ' +
             new Date(taskData[FireTaskQueue.TaskProperties.DUE_AT]), taskData);
         this.scheduleQueryRefresh_(dueAt);
+
     } else {
+
         try {
             // Call the processor, and pass it a function it can call (even asynchronously) to tell
             // us whether it succeeded, so that we can reschedule the item or delete it.
@@ -346,7 +349,7 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
         var attempts = taskData[FireTaskQueue.TaskProperties.ATTEMPTS] || 0;
         taskData[FireTaskQueue.TaskProperties.ATTEMPTS] = attempts + 1;
 
-        // Serialize the error value.
+        // Serialize the error value as informatively as possible.
         taskData[FireTaskQueue.TaskProperties.ERROR] = this.prepareErrorValue_(retVal);
 
         // Reschedule after a backoff interval. This will also delete the original.
@@ -354,25 +357,21 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
         this.schedule(taskData, when, taskId).
             then(null, function(err) {
                 FireTaskQueue.log_(self.name_ +
-                        ': Failed to reschedule task, the original will eventually be reprocessed:',
-                        taskData, err);
-                throw err;
+                    ': Failed to reschedule task, the original will eventually be reprocessed:',
+                    taskData, err);
             });
     } else {
-        FireTaskQueue.log_(this.name_ +
-                ': Task ' + taskId + ' was executed successfully', taskData);
 
-        FireTaskQueue.log_(self.name_ + ': Deleting task ' + taskId + ' ...', taskData);
-        return self.ref_.child(taskId).remove(function(/** Error */err) {
+        FireTaskQueue.log_(this.name_ + ': Task ' + taskId +
+            ' was executed successfully. Deleting it ...', taskData);
+
+        this.ref_.child(taskId).remove(function(/** Error */err) {
             if (!err) {
                 FireTaskQueue.log_(self.name_ + ': Task ' + taskId + ' deleted successfully',
                     taskData);
             } else {
                 FireTaskQueue.log_(self.name_ +
-                        ': Failed to delete task - it will eventually be processed again',
-                        taskData, err);
-                // Don't rethrow the error - it won't stop the task getting reprocessed sooner or
-                // later.
+                    ': Failed to delete task - it will eventually be reprocessed', taskData, err);
             }
         });
     }
@@ -398,7 +397,7 @@ FireTaskQueue.prototype.calculateBackoff_ = function(attempts) {
 
 /**
  * When the consumer's callback returns/throws a value, we try to store it in Firebase. If we can
- * use it as-is, we will. Otherwise, we'll try to serialize it if it helps us.
+ * use it as-is, we will. Otherwise, we'll try to serialize it as informatively as possible.
  *
  * @param {*} errVal The value returned by the consumer's callback.
  * @return {Firebase.Value}
