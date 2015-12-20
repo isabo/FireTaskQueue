@@ -349,11 +349,9 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
         // Serialize the error value.
         taskData[FireTaskQueue.TaskProperties.ERROR] = this.prepareErrorValue_(retVal);
 
-        // Reschedule based on the number of attempts. This will also delete the original.
-        var delay = Math.pow(2, attempts) * this.minBackOff_;
-        delay = Math.min(delay, this.maxBackOff_);
-        var when = Date.now() + delay;
-        return this.schedule(taskData, when, taskId).
+        // Reschedule after a backoff interval. This will also delete the original.
+        var when = Date.now() + this.calculateBackoff_(attempts);
+        this.schedule(taskData, when, taskId).
             then(null, function(err) {
                 FireTaskQueue.log_(self.name_ +
                         ': Failed to reschedule task, the original will eventually be reprocessed:',
@@ -378,6 +376,23 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
             }
         });
     }
+};
+
+
+/**
+ * Calculate the number of milliseconds to wait between retries, doubling the interval each time.
+ *
+ * @param {number} attempts The number of retry attempts so far.
+ * @return {number} of milliseconds to wait.
+ * @private
+ */
+FireTaskQueue.prototype.calculateBackoff_ = function(attempts) {
+
+    // Calculate the backoff according to doubling intervals.
+    var delay = Math.pow(2, attempts) * this.minBackOff_;
+
+    // Limit it to the maximum period.
+    return Math.min(delay, this.maxBackOff_);
 };
 
 
