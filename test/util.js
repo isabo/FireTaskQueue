@@ -2,6 +2,11 @@ var test = require('tape');
 
 var Firebase = require('firebase');
 
+if (!(process.env.FTQ_FIREBASE_NAME && process.env.FTQ_FIREBASE_TOKEN)) {
+    throw new Error('FTQ_FIREBASE_NAME and FTQ_FIREBASE_TOKEN environment variables must be defined!');
+}
+
+
 var ref = new Firebase('https://' + process.env.FTQ_FIREBASE_NAME + '.firebaseio.com/queues');
 
 module.exports = {
