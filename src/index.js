@@ -315,8 +315,21 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
         try {
             // Call the processor, and pass it a function it can call (even asynchronously) to tell
             // us whether it succeeded, so that we can reschedule the item or delete it.
-            this.processor_.call(null, taskId, taskData,
-                this.finishTask_.bind(this, taskId, taskData));
+            var done = this.finishTask_.bind(this, taskId, taskData);
+            var retVal = this.processor_.call(null, taskId, taskData, done);
+
+            // If processor function returns a promise, it does not need to call done(). We will
+            // do that when the promise settles.
+            if (retVal && typeof retVal['then'] === 'function') {
+                retVal.then(function(rv) {
+                    // The promise may have returned a value, but the done() function must be called
+                    // without a value in order to indicate success.
+                    done();
+                }, function(err){
+                    // The promise may have been rejected, but without passing a reason.
+                    done(err || new Error('Task Failed, but did not return a specific error'));
+                });
+            }
         } catch (err) {
             // Consumer's processor method threw an exception, i.e. it failed. Schedule a retry.
             this.finishTask_(taskId, taskData, err);
@@ -331,10 +344,9 @@ FireTaskQueue.prototype.processTask_ = function(snapshot) {
  *
  * @param {string} taskId The ID of the task in the queue.
  * @param {!Object} taskData The task data taken from the queue.
- * @param {*} retVal Whether the consumer's callback succeeded in processing the task. If not, we
+ * @param {*=} retVal Whether the consumer's callback succeeded in processing the task. If not, we
  *      schedule a retry.
  *      undefined = succeeded, false or Error or anything else means it failed.
- * @return {!Promise}
  * @private
  */
 FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
