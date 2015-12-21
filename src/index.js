@@ -26,14 +26,6 @@ var FireTaskQueue = function(name, ref) {
     this.ref_ = ref;
 
     /**
-     * The path to the queue relative to the root of the database.
-     *
-     * @type {string}
-     * @private
-     */
-    this.path_ = this.getInternalPath_();
-
-    /**
      * The query that returns tasks that need to be processed.
      *
      * @type {Firebase.Query}
@@ -138,57 +130,120 @@ FireTaskQueue.prototype.getName = function() {
  *
  * @param {!Object} taskData A task that needs to be processed.
  * @param {Date|number=} opt_when When to try to process the task (not before).
- * @param {string=} opt_failedId_ If scheduling a retry, the ID of the failed task. For internal use.
- * @return {!Promise<string,Error>} which resolves to the reference of the newly created task if
- *      successful or is rejected if not.
+ * @param {string=} opt_taskId The ID to assign the new task. This is not necessary, but can be
+ *      used to prevent duplicate tasks being created.
+ * @return {!Promise<string,(Error|FireTaskQueue.DuplicateIdError)>} which resolves to the ID of the
+ *      newly created task if successful or is rejected if not. If rejected because opt_taskId was
+ *      specified and a task with the same ID already exists, the rejected value will be an error of
+ *      the type FireTaskQueue.DuplicateIdError.
  */
-FireTaskQueue.prototype.schedule = function(taskData, opt_when, opt_failedId_) {
+FireTaskQueue.prototype.schedule = function(taskData, opt_when, opt_taskId) {
 
-    if (!opt_failedId_) {
-        FireTaskQueue.log_(this.name_ + ': Scheduling a task ...', taskData);
-    } else {
-        FireTaskQueue.log_(this.name_ + ': Rescheduling a task after ' +
-            taskData[FireTaskQueue.TaskProperties.ATTEMPTS] + ' failed attempts:', taskData);
+    // Convert dates to integers if necessary.
+    if (opt_when && typeof opt_when.getTime === 'function') {
+        opt_when = opt_when.getTime();
     }
+    taskData[FireTaskQueue.TaskProperties.DUE_AT] = opt_when || Fbase.ServerValue.TIMESTAMP;
+
+    var msg = this.name_ + ': Scheduling a task for ' +
+        (!opt_when ? 'immediate execution ' : 'execution at ' + new Date(opt_when)) +
+        (opt_taskId ? 'with ID=' + opt_taskId : '') + ' ...';
+    FireTaskQueue.log_(msg, taskData);
+
+    if (!opt_taskId) {
+        return this.scheduleTaskAutoId_(taskData);
+    } else {
+        return this.scheduleTaskUsingId_(opt_taskId, taskData);
+    }
+};
+
+
+/**
+ * Schedules a task for processing on this queue.
+ *
+ * @param {!Object} taskData The task data, which already includes the due time.
+ * @return {!Promise<string,Error>} which resolves to the ID of the newly created task if
+ *      successful or is rejected if not.
+ * @private
+ */
+FireTaskQueue.prototype.scheduleTaskAutoId_ = function(taskData) {
 
     var self = this;
     return new Promise(function(resolve, reject) {
 
-        // Convert dates to integers if necessary.
-        if (opt_when && typeof opt_when.getTime === 'function') {
-            opt_when = opt_when.getTime();
-        }
-        taskData[FireTaskQueue.TaskProperties.DUE_AT] = opt_when || Fbase.ServerValue.TIMESTAMP;
-
         // Generate an ID for the new task.
         var taskId = self.ref_.push().key();
 
-        // Create the new task and if necessary delete the failed task in one operation. This
-        // requires an update operation relative to the root.
-        var data = {}
-        data[self.path_ + '/' + taskId] = taskData;
-        if (opt_failedId_) {
-            data[self.path_ + '/' + opt_failedId_] = null;
-        }
-        self.ref_.root().update(data, function(/**!Error*/err) {
+        // Set the data.
+        self.ref_.child(taskId).set(taskData, function(/**Error*/err) {
 
             if (!err) {
-                var msg;
-                if (opt_when) {
-                    msg = 'future execution at ' + new Date(opt_when);
-                } else {
-                    msg = 'immediate execution'
-                }
-                FireTaskQueue.log_(self.name_ + ': Scheduled a task for ' + msg +
-                    '[' + taskId + ']', taskData);
+                FireTaskQueue.log_(self.name_ + ': Task scheduled successfully: [' + taskId + ']',
+                    taskData);
+
+                // Indicate that we have succeeded in scheduling the task.
                 resolve(taskId);
 
             } else {
-
                 FireTaskQueue.log_(self.name_ + ': ERROR while scheduling task:', taskData, err);
+
+                // Indicate that we failed to schedule the task.
                 reject(err);
             }
         });
+    });
+};
+
+
+/**
+ * Schedules a task with a specific ID for processing on this queue. If a task with that ID already
+ * exists, the operation will fail, and the promise will be rejected with an error of the type
+ * FireTaskQueue.DuplicateIdError.
+ *
+ * @param {string} taskId The ID to assign the task.
+ * @param {!Object} taskData The task data, which already includes the due time.
+ * @return {!Promise<string,(Error|FireTaskQueue.DuplicateIdError)>} which resolves to the ID of the
+ *      newly created task if successful or is rejected if not.
+ * @private
+ */
+FireTaskQueue.prototype.scheduleTaskUsingId_ = function(taskId, taskData) {
+
+    var self = this;
+    return new Promise(function(resolve, reject) {
+
+        // A task ID was provided: create the task only if there is no such task.
+
+        self.ref_.child(taskId).transaction(function(/**Object*/existingTask) {
+
+            // If the task does not exist, save the data. Otherwise, abort.
+            return !existingTask ? taskData : undefined;
+
+        }, function(/**Error*/err, /**boolean*/committed, /**!Firebase.DataSnapshot*/snapshot) {
+
+            if (!err) {
+
+                if (committed) {
+                    FireTaskQueue.log_(self.name_ + ': Task scheduled successfully: [' +
+                        taskId + ']', taskData);
+
+                    // Indicate that we have succeeded in scheduling the task.
+                    resolve(taskId);
+
+                } else {
+                    FireTaskQueue.log_(self.name_ + ': Failed to schedule task - duplicate ID: ' +
+                        '[' + taskId + ']', taskData);
+
+                    // Indicate that we failed to schedule the task.
+                    reject(new FireTaskQueue.DuplicateIdError(taskId));
+                }
+
+            } else {
+                FireTaskQueue.log_(self.name_ + ': ERROR while scheduling task:', taskData, err);
+
+                // Indicate that we failed to schedule the task.
+                reject(err);
+            }
+        }, false);
     });
 };
 
@@ -203,9 +258,9 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when, opt_failedId_) {
  *      and with an error or any other value except undefined and null to indicate failure.
  * @param {number=} opt_parallelCount The number of tasks that are allowed execute in parallel.
  * @param {number=} opt_maxBackOff Failed tasks should be retried at intervals no larger than this
- *  (microseconds).
+ *      (microseconds).
  * @param {number=} opt_minBackOff Failed tasks should be retried at intervals no smaller than this
- *  (microseconds).
+ *      (microseconds).
  */
 FireTaskQueue.prototype.monitor = function(fn, opt_parallelCount, opt_maxBackOff, opt_minBackOff) {
 
@@ -231,20 +286,6 @@ FireTaskQueue.prototype.monitor = function(fn, opt_parallelCount, opt_maxBackOff
 
 
 /**
- * Determine the path of the queue relative to the Firebase root, i.e. without the
- * https://xyz.firebaseio.com/ at the beginning.
- *
- * @return {string}
- * @private
- */
-FireTaskQueue.prototype.getInternalPath_ = function() {
-
-    var l = this.ref_.root().toString().length;
-    return this.ref_.toString().slice(l);
-};
-
-
-/**
  * Executes a Firebase query that will call us back for each task in the queue.
  *
  * @private
@@ -258,6 +299,7 @@ FireTaskQueue.prototype.startMonitoring_ = function() {
     // Our query will be a rolling window containing the first X tasks that need to be executed.
     this.query_ = this.ref_.orderByChild(FireTaskQueue.TaskProperties.DUE_AT).limitToFirst(this.parallelCount_);
     this.query_.on('child_added', this.processTask_, function(err){}, this);
+    this.query_.on('child_changed', this.processTask_, function(err){}, this);
     this.isMonitoring_ = true;
 
     FireTaskQueue.log_(this.name_ + ': Started');
@@ -276,6 +318,7 @@ FireTaskQueue.prototype.stopMonitoring_ = function() {
     FireTaskQueue.log_(this.name_ + ': Stopping ...');
 
     this.query_.off('child_added', this.processTask_, this);
+    this.query_.off('child_changed', this.processTask_, this);
     this.query_ = null;
 
     if (this.queryRefreshTime_) {
@@ -354,39 +397,72 @@ FireTaskQueue.prototype.finishTask_ = function(taskId, taskData, retVal) {
     var self = this;
     if (retVal !== undefined && retVal !== null) {
 
-        FireTaskQueue.log_(this.name_ + ': Failed Task ' + taskId + ' - will reschedule:',
-            JSON.stringify(taskData), retVal);
+        FireTaskQueue.log_(this.name_ + ': Task failed: ' + taskId, taskData, retVal);
+        this.rescheduleTask_(taskId, taskData, retVal);
 
-        // Increment the number of failed attempts.
-        var attempts = taskData[FireTaskQueue.TaskProperties.ATTEMPTS] || 0;
-        taskData[FireTaskQueue.TaskProperties.ATTEMPTS] = attempts + 1;
-
-        // Serialize the error value as informatively as possible.
-        taskData[FireTaskQueue.TaskProperties.ERROR] = this.prepareErrorValue_(retVal);
-
-        // Reschedule after a backoff interval. This will also delete the original.
-        var when = Date.now() + this.calculateBackoff_(attempts);
-        this.schedule(taskData, when, taskId).
-            then(null, function(err) {
-                FireTaskQueue.log_(self.name_ +
-                    ': Failed to reschedule task, the original will eventually be reprocessed:',
-                    taskData, err);
-            });
     } else {
 
-        FireTaskQueue.log_(this.name_ + ': Task ' + taskId +
-            ' was executed successfully. Deleting it ...', taskData);
-
-        this.ref_.child(taskId).remove(function(/** Error */err) {
-            if (!err) {
-                FireTaskQueue.log_(self.name_ + ': Task ' + taskId + ' deleted successfully',
-                    taskData);
-            } else {
-                FireTaskQueue.log_(self.name_ +
-                    ': Failed to delete task - it will eventually be reprocessed', taskData, err);
-            }
-        });
+        FireTaskQueue.log_(this.name_ + ': Task executed successfully: ' + taskId, taskData);
+        this.deleteTask_(taskId);
     }
+};
+
+
+/**
+ * Reschedules a task for which processing failed.
+ *
+ * @param {string} taskId The ID of the task that failed.
+ * @param {!Object} taskData The task data.
+ * @param {*=} retVal The error data returned when the task failed.
+ * @private
+ */
+FireTaskQueue.prototype.rescheduleTask_ = function(taskId, taskData, retVal) {
+
+    FireTaskQueue.log_(this.name_ + ': Rescheduling task ' + taskId, taskData, retVal);
+
+    // Hold the changes we need to make to the task.
+    var changes = {};
+
+    // Increment the number of failed attempts.
+    var attempts = taskData[FireTaskQueue.TaskProperties.ATTEMPTS] || 0;
+    changes[FireTaskQueue.TaskProperties.ATTEMPTS] = attempts + 1;
+
+    // Reschedule after a backoff interval.
+    changes[FireTaskQueue.TaskProperties.DUE_AT] = Date.now() + this.calculateBackoff_(attempts);
+
+    // Serialize the error value as informatively as possible.
+    changes[FireTaskQueue.TaskProperties.ERROR] = this.prepareErrorValue_(retVal);
+
+    // Modify the existing task and leave it in the queue. This will trigger a child_changed event
+    // if the task stays within the query window.
+    var self = this;
+    this.ref_.child(taskId).update(changes, function(/**Error*/err) {
+        var msg = (!err ? 'Task rescheduled: ' :
+            'Failed to reschedule task. It will eventually be reprocessed: ');
+        FireTaskQueue.log_(self.name_ + ': ' + msg + taskId, taskData, err);
+    });
+};
+
+
+/**
+ * Deletes the task after we have finished with it.
+ *
+ * @param {string} taskId The ID of the task.
+ * @private
+ */
+FireTaskQueue.prototype.deleteTask_ = function(taskId) {
+
+    FireTaskQueue.log_(this.name_ + ': Deleting task ' + taskId + ' ...');
+
+    var self = this;
+    this.ref_.child(taskId).remove(function(/** Error */err) {
+        if (!err) {
+            FireTaskQueue.log_(self.name_ + ': Task ' + taskId + ' deleted successfully');
+        } else {
+            FireTaskQueue.log_(self.name_ +
+                ': Failed to delete task - it will eventually be reprocessed', taskId,  err);
+        }
+    });
 };
 
 
@@ -500,6 +576,7 @@ FireTaskQueue.prototype.prepareErrorValue_ = function(errVal) {
     }
 };
 
+
 /**
  * If we encounter a future task when processing the queue, we need to revisit it at the appointed
  * time. If until then it does not drop out of the window, we will not get another child_added
@@ -542,7 +619,6 @@ FireTaskQueue.prototype.cancelQueryRefresh_ = function() {
 
     this.queryRefreshHandle_ = null;
     this.queryRefreshTime_ = null;
-
 };
 
 
@@ -633,6 +709,21 @@ FireTaskQueue.TaskProperties = {
  * @private
  */
 FireTaskQueue.LOG_PREFIX_ = 'FIRE_TASK_QUEUE:';
+
+
+/**
+ * A custom error we pass back to indicate that a task with a specified ID could not be created
+ * because another task has that ID.
+ *
+ * @constructor
+ * @extends {Error}
+ */
+FireTaskQueue.DuplicateIdError = function(id) {
+    this.name = 'DuplicateIdError';
+    this.message = 'A task with that ID already exists: ' + id;
+};
+FireTaskQueue.DuplicateIdError.prototype = Object.create(Error.prototype);
+FireTaskQueue.DuplicateIdError.prototype.constructor = FireTaskQueue.DuplicateIdError;
 
 
 /**
