@@ -1,6 +1,6 @@
 {
   "name": "fire-task-queue",
-  "version": "1.0.0-beta.2",
+  "version": "1.0.0-beta.3",
   "description": "A simple task queue for Firebase apps.",
   "main": "src/index.js",
   "scripts": {
