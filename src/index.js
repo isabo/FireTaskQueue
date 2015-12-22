@@ -132,12 +132,15 @@ FireTaskQueue.prototype.getName = function() {
  * @param {Date|number=} opt_when When to try to process the task (not before).
  * @param {string=} opt_taskId The ID to assign the new task. This is not necessary, but can be
  *      used to prevent duplicate tasks being created.
+ * @param {boolean=} opt_replace If an ID was specified, whether this task replaces an existing one
+ *      with the same ID. Default: false. If true, an existing task may be overwritten with the new
+ *      task, an no error will be returned.
  * @return {!Promise<string,(Error|FireTaskQueue.DuplicateIdError)>} which resolves to the ID of the
  *      newly created task if successful or is rejected if not. If rejected because opt_taskId was
  *      specified and a task with the same ID already exists, the rejected value will be an error of
  *      the type FireTaskQueue.DuplicateIdError.
  */
-FireTaskQueue.prototype.schedule = function(taskData, opt_when, opt_taskId) {
+FireTaskQueue.prototype.schedule = function(taskData, opt_when, opt_taskId, opt_replace) {
 
     // Convert dates to integers if necessary.
     if (opt_when && typeof opt_when.getTime === 'function') {
@@ -150,10 +153,10 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when, opt_taskId) {
         (opt_taskId ? 'with ID=' + opt_taskId : '') + ' ...';
     FireTaskQueue.log_(msg, taskData);
 
-    if (!opt_taskId) {
-        return this.scheduleTaskAutoId_(taskData);
+    if (!opt_taskId || opt_taskId && opt_replace) {
+        return this.scheduleTask_(taskData, opt_taskId);
     } else {
-        return this.scheduleTaskUsingId_(opt_taskId, taskData);
+        return this.scheduleTaskIfUnique_(taskData, opt_taskId);
     }
 };
 
@@ -162,17 +165,19 @@ FireTaskQueue.prototype.schedule = function(taskData, opt_when, opt_taskId) {
  * Schedules a task for processing on this queue.
  *
  * @param {!Object} taskData The task data, which already includes the due time.
+ * @param {string=} opt_taskId The ID to assign the new task, if the new task is allowed to replace
+ *      an existing one of the same ID.
  * @return {!Promise<string,Error>} which resolves to the ID of the newly created task if
  *      successful or is rejected if not.
  * @private
  */
-FireTaskQueue.prototype.scheduleTaskAutoId_ = function(taskData) {
+FireTaskQueue.prototype.scheduleTask_ = function(taskData, opt_taskId) {
 
     var self = this;
     return new Promise(function(resolve, reject) {
 
-        // Generate an ID for the new task.
-        var taskId = self.ref_.push().key();
+        // Generate an ID for the new task, unless already specified.
+        var taskId = opt_taskId || self.ref_.push().key();
 
         // Set the data.
         self.ref_.child(taskId).set(taskData, function(/**Error*/err) {
@@ -200,13 +205,13 @@ FireTaskQueue.prototype.scheduleTaskAutoId_ = function(taskData) {
  * exists, the operation will fail, and the promise will be rejected with an error of the type
  * FireTaskQueue.DuplicateIdError.
  *
- * @param {string} taskId The ID to assign the task.
  * @param {!Object} taskData The task data, which already includes the due time.
+ * @param {string} taskId The ID to assign the task.
  * @return {!Promise<string,(Error|FireTaskQueue.DuplicateIdError)>} which resolves to the ID of the
  *      newly created task if successful or is rejected if not.
  * @private
  */
-FireTaskQueue.prototype.scheduleTaskUsingId_ = function(taskId, taskData) {
+FireTaskQueue.prototype.scheduleTaskIfUnique_ = function(taskData, taskId) {
 
     var self = this;
     return new Promise(function(resolve, reject) {

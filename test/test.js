@@ -18,7 +18,7 @@ util.login().
         setTimeout(() => {
             FireTaskQueue.disposeAll();
             process.exit(0);
-        }, 3000);
+        }, 5000);
     }, function(err) {
         FireTaskQueue.disposeAll();
         process.exit(1);

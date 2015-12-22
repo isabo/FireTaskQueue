@@ -8,6 +8,7 @@ module.exports = function() {
         then(queuesTaskForImmediateProcessing).
         then(queuesTaskWithID).
         then(failsToQueueTaskWithDuplicateID).
+        then(queuesTaskWithDuplicateID).
         then(queuesTaskForFutureProcessing).
         then(processesTasks);
 };
@@ -50,7 +51,7 @@ function queuesTaskWithID() {
         var id = 'xyz123';
 
         var task = {
-            name: 'task2'
+            name: 'task2 original'
         }
 
         return q.schedule(task, undefined, id).
@@ -94,7 +95,39 @@ function failsToQueueTaskWithDuplicateID() {
                 return util.once(qRef.child(id), 'value').
                     then(function(snapshot) {
                         var actual = snapshot.val();
-                        t.equal(actual.name, 'task2', 'The existing task was not overwritten');
+                        t.equal(actual.name, 'task2 original', 'The existing task was not overwritten');
+                    });
+            });
+    });
+}
+
+
+function queuesTaskWithDuplicateID() {
+
+    return util.testP('Queue a task with a duplicate ID, replacing the previous one', function(t) {
+
+        var id = 'xyz123';
+
+        var task = {
+            name: 'task2'
+        }
+
+        return q.schedule(task, undefined, id, true).
+            then(function(key) {
+
+                t.pass('schedule() reports that the task was queued');
+
+            }, function(err) {
+
+                t.fail('schedule() reports that the task was not queued');
+            }).
+            then(function() {
+
+                // Verify that the existing task was overwritten.
+                return util.once(qRef.child(id), 'value').
+                    then(function(snapshot) {
+                        var actual = snapshot.val();
+                        t.equal(actual.name, 'task2', 'The existing task was overwritten');
                     });
             });
     });
