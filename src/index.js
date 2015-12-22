@@ -736,14 +736,22 @@ FireTaskQueue.DuplicateIdError.prototype.constructor = FireTaskQueue.DuplicateId
  *
  * @param {string} queueName The name of the queue.
  * @param {!Object} taskData A task that needs to be processed.
- * @param {Date|number=} when When to try to process the item.
- * @return {!Promise} which resolves if successful or is rejected if not.
+ * @param {Date|number=} opt_when When to try to process the item.
+ * @param {string=} opt_taskId The ID to assign the new task. This is not necessary, but can be
+ *      used to prevent duplicate tasks being created.
+ * @param {boolean=} opt_replace If an ID was specified, whether this task replaces an existing one
+ *      with the same ID. Default: false. If true, an existing task may be overwritten with the new
+ *      task, an no error will be returned.
+ * @return {!Promise<string,(Error|FireTaskQueue.DuplicateIdError)>} which resolves to the ID of the
+ *      newly created task if successful or is rejected if not. If rejected because opt_taskId was
+ *      specified and a task with the same ID already exists, the rejected value will be an error of
+ *      the type FireTaskQueue.DuplicateIdError.
  */
-FireTaskQueue.schedule = function(queueName, taskData, when) {
+FireTaskQueue.schedule = function(queueName, taskData, opt_when, opt_taskId, opt_replace) {
 
     var q = FireTaskQueue.get(queueName);
     if (q) {
-        return q.schedule(taskData, when);
+        return q.schedule(taskData, opt_when, opt_taskId, opt_replace);
     } else {
         return Promise.reject(new Error('No such queue'));
     }
