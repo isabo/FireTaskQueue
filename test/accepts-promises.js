@@ -1,15 +1,24 @@
 var util = require('./util');
 var FireTaskQueue = require('../src/');
 
-module.exports = {
-    acceptsPromises: acceptsPromises,
-    handlesRejectedPromises: handlesRejectedPromises
-}
+
+module.exports = function() {
+
+    return Promise.resolve().
+        then(acceptsPromises).
+        then(handlesRejectedPromises);
+};
+
 
 
 function acceptsPromises() {
 
-    var q = new FireTaskQueue('processorCanReturnPromiseQ', util.ref.child('processorCanReturnPromiseQ'));
+    // Generate a random key to use for the queue, so that we're not using leftovers of previous failed
+    // tests.
+    var queueKey = 'test-return-promises-' + util.ref.push().key();
+    var qRef = util.ref.child(queueKey);
+
+    var q = new FireTaskQueue('ReturnPromises', qRef);
     q.schedule({});
 
     return util.testP('Accepts promise as return value', function(t) {
@@ -73,7 +82,12 @@ function acceptsPromises() {
 
 function handlesRejectedPromises() {
 
-    var q = new FireTaskQueue('rejectedPromises', util.ref.child('rejectedPromises'));
+    // Generate a random key to use for the queue, so that we're not using leftovers of previous failed
+    // tests.
+    var queueKey = 'test-rejected-promises-' + util.ref.push().key();
+    var qRef = util.ref.child(queueKey);
+
+    var q = new FireTaskQueue('RejectedPromises', qRef);
     q.schedule({});
 
     return util.testP('Treats a rejected promise as a task failure', function(t) {

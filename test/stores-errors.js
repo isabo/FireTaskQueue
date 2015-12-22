@@ -75,7 +75,7 @@ function storesErrors() {
     // Run the test.
     return util.testP('Records errors', function(t) {
         return new Promise(function(resolve, reject) {
-            var qName = 'recordErrors';
+            var qName = 'test-record-errors-' + util.ref.push().key();
             FireTaskQueue.monitor(util.ref.child(qName), function(id, task, done) {
 
                 // The first time this is called for each task, return an error.
