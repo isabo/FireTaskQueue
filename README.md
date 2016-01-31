@@ -3,16 +3,20 @@ A basic task queue for Node.js apps that use Firebase. I built it to make things
 early stages of developing apps that need a queue, but which could do without the complication of
 introducing a separate queue service such as RabbitMQ at an early stage.
 
-## Principles
+## Features
+- You can schedule tasks to be performed ASAP or at a specific time in the future.
+- Tasks that fail are automatically retried at exponentially increasing intervals.
+- You can define multiple queues, each with its own configuration and tasks.
+
+## FYI
 - A task is an object that holds information that is meaningful to your app. The object's properties
   and values must be compatible with what Firebase supports, i.e., values must be primitives.
 - Tasks can be submitted for immediate execution or for execution at a specific time (i.e. delayed
   execution).
 - Tasks are not guaranteed to be processed in the order they were submitted, but that is the general
   intention.
-- If a task fails, it will be retried at exponentially increasing intervals up to 1 hour.
-- Tasks cannot have multiple user-defined statuses. They are either in the queue, i.e. not yet
-  processed, or are not in the queue, i.e. processed successfully then deleted.
+- If a task fails, it will be retried at exponentially increasing intervals up to a default of 1
+  hour.
 - It is possible, though unlikely, that a task will be executed more than once. Make your handlers
   idempotent.
 - You can define multiple named queues. They each need their own FireTaskQueue instance to process
