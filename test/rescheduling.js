@@ -48,12 +48,13 @@ function failedTaskIsReprocessed() {
                             case 2:
                                 t.pass('Throwing an exception fails the task');
                                 t.equal(task.lastFailureReason.message, 'Attempt 1 failed on purpose', 'The exception was serialized correctly');
-                                task.fail('Attempt 2 failed on purpose');
+                                task.fail('Attempt 2 failed on purpose', {status: 2});
                                 break;
 
                             case 3:
                                 t.pass('Calling fail() fails the task');
                                 t.equal(task.lastFailureReason, 'Attempt 2 failed on purpose', 'The fail() argument was stored correctly');
+                                t.equal(task.data.status, 2, 'Correctly stored new data that was passed to fail()');
                                 return Promise.reject('Attempt 3 failed on purpose');
 
                             case 4:

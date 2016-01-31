@@ -210,47 +210,6 @@ The unprocessed tasks remain in Firebase.
 
 
 
-#### Task
-
-A Task instance is passed to the processing function.
-
-#### task.id
-The ID of the task.
-
-#### task.data
-The data with which the task was scheduled.
-
-#### task.dueAt
-The UTC timestamp at which the task was scheduled to be executed.
-
-#### task.attempts
-The number of previous (failed) attempts to execute the task.
-
-#### task.lastFailureReason
-The reason for the last failure. This is from one of these possibilities:
-1. The value passed to `task.fail()` by a previous invocation.
-2. The value with which the promise returned by a previous invocation was rejected.
-3. The error which was thrown by a previous invocation.
-
-#### task.success()
-Call this to indicate that the task has been processed successfully.
-
-#### task.fail(reason)
-Call this to indicate that the task was not processed, and should be retried.
-##### Arguments
-| Name | Type | Description |
-|------|------|-------------|
-| reason | string, number, boolean, Object, Error | Something that indicates what went wrong. |
-
-
-
-#### FireTaskQueue.DuplicateIdError
-
-This error is the rejected value when `scheduleTask()` fails because there is already a task with
-the specified ID.
-
-
-
 #### FireTaskQueue.scheduleTask(queueName, taskData, [when, [taskId, [replace]]])
 
 Schedules a task for processing.
@@ -321,6 +280,48 @@ processing is complete, using any of the following:
 Stops monitoring all queues and releases the memory used by the queues.
 The unprocessed tasks remain in Firebase.
 Call this when shutting down.
+
+
+
+### FireTaskQueue.Task
+
+A Task instance is passed to the processing function.
+
+#### task.id
+The ID of the task.
+
+#### task.data
+The data with which the task was scheduled.
+
+#### task.dueAt
+The UTC timestamp at which the task was scheduled to be executed.
+
+#### task.attempts
+The number of previous (failed) attempts to execute the task.
+
+#### task.lastFailureReason
+The reason for the last failure. This is from one of these possibilities:
+1. The value passed to `task.fail()` by a previous invocation.
+2. The value with which the promise returned by a previous invocation was rejected.
+3. The error which was thrown by a previous invocation.
+
+#### task.success()
+Call this to indicate that the task has been processed successfully.
+
+#### task.fail(reason, [data])
+Call this to indicate that the task was not processed, and should be retried.
+##### Arguments
+| Name | Type | Description |
+|------|------|-------------|
+| reason | string, number, boolean, Object, Error | Something that indicates what went wrong. |
+| [data] | Object | Optional. If supplied, this data object will replace the original one. This allows state information to be saved so that the next attempt can pick up where this attempt left off.
+
+
+
+### FireTaskQueue.DuplicateIdError
+
+This error is the rejected value when `scheduleTask()` fails because there is already a task with
+the specified ID.
 
 
 

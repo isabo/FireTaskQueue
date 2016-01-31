@@ -157,12 +157,15 @@ class Task {
      * Called by the consumer to indicate that processing has failed for this task, and that it
      * should be retried.
      *
-     * @param {*} reason A value that inidcates what went wrong, for debugging purposes. Typically
-     *      an Error instance.
+     * @param {Firebase.Value|Error} reason A value that inidcates what went wrong, for debugging
+     *      purposes. Typically an Error instance.
+     * @param {Object=} opt_data New data to store in the task instead of the previous data. This
+     *      allows us to pick up next time from where we got to this time, if the processing was
+     *      partially successful.
      * @return {!Promise<string,Error>}
      * @export
      */
-    fail(reason) {
+    fail(reason, opt_data) {
 
         log(`${this.config_.name}: Task failed. ID=${this.id_} Attempt=${this.attempts_+1}\n\tReason:`,
             reason, '\n\tTask Data:', this.data_);
@@ -180,7 +183,7 @@ class Task {
 
         // Update the task data. The effect is to reschedule it for later because we changed the
         // DUE_AT timestamp.
-        return this.update(undefined, dueAt, attempts, error);
+        return this.update(opt_data, dueAt, attempts, error);
     }
 
 
