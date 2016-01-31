@@ -16,7 +16,7 @@ module.exports = function() {
 
 // Generate a random key to use for the queue, so that we're not using leftovers of previous failed
 // tests.
-var queueKey = 'test-basic-' + util.ref.push().key();
+var queueKey = 'test-basic' + util.ref.push().key();
 var qRef = util.ref.child(queueKey);
 var q = new FireTaskQueue('BasicTestQueue', qRef);
 
@@ -29,7 +29,7 @@ function queuesTaskForImmediateProcessing() {
             name: 'task1'
         };
 
-        return q.schedule(task).
+        return q.scheduleTask(task).
             then(function(key) {
                 t.pass('Schedule method reports success');
 
@@ -54,7 +54,7 @@ function queuesTaskWithID() {
             name: 'task2 original'
         }
 
-        return q.schedule(task, undefined, id).
+        return q.scheduleTask(task, undefined, id).
             then(function(key) {
 
                 t.equal(key, id, 'schedule() returns the specified ID');
@@ -79,7 +79,7 @@ function failsToQueueTaskWithDuplicateID() {
             name: 'task2 duplicate'
         }
 
-        return q.schedule(task, undefined, id).
+        return q.scheduleTask(task, undefined, id).
             then(function(key) {
 
                 t.fail('schedule() reports that the task was queued, but it should have been rejected');
@@ -112,7 +112,7 @@ function queuesTaskWithDuplicateID() {
             name: 'task2'
         }
 
-        return q.schedule(task, undefined, id, true).
+        return q.scheduleTask(task, undefined, id, true).
             then(function(key) {
 
                 t.pass('schedule() reports that the task was queued');
@@ -143,7 +143,7 @@ function queuesTaskForFutureProcessing() {
         }
 
         var when = Date.now() + 5000;
-        return q.schedule(task, when).
+        return q.scheduleTask(task, when).
             then(function(key) {
                 return util.once(qRef.child(key), 'value').
                     then(function(snapshot) {
@@ -161,10 +161,10 @@ function processesTasks() {
     return util.testP('Processes the queued tasks', function(t) {
         return new Promise(function(resolve, reject) {
             var count = 0;
-            q.monitor(function(id, task, done) {
+            q.start(function(task) {
                 count++;
-                t.equal(task.name, 'task' + count, 'Processing task ' + count);
-                done();
+                t.equal(task.data.name, 'task' + count, 'Processing task ' + count);
+                task.success();
                 if (count === 3) {
                     resolve();
                 }
