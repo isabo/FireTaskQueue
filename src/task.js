@@ -2,6 +2,7 @@
 
 var Firebase = require('firebase');
 var Config = require('./config');
+var Registry = require('./registry');
 var log = require('./util').log;
 
 
@@ -140,16 +141,45 @@ class Task {
 
 
     /**
-     * Called by the consumer to indicate the task was processed successfully.
+     * Called by the consumer to indicate the task was processed successfully. If called with
+     * arguments, schedules another task and completes the current one in a single atomic operation.
+     *
+     * @param {string=} opt_queueName The name of the queue on which to schedule the next task. If
+     *      this is omitted but opt_data is supplied, the new task will be created on the same
+     *      queue as the current task.
+     * @param {!Object=} opt_data The data that needs to be processed.
+     * @param {number=} opt_dueAt When to try to process the task (not before). Timestamp.
+     * @param {string=} opt_Id The ID to assign the new task. This is not necessary, but can be
+     *      used to prevent duplicate tasks being created.
+     * @return {!Promise<string,Error>|!Promise<null,Error>} which resolves to the ID of the
+     *      newly created task if successful or is rejected if not. If rejected because opt_Id was
+     *      specified and a task with the same ID already exists, the rejected value will be an
+     *      error of the type DuplicateIdError.
      *
      * @export
      */
-    success() {
+    success(opt_queueName, opt_data, opt_dueAt, opt_Id) {
 
         log(`${this.config_.name}: Task executed successfully. ID=${this.id_} Attempt=${this.attempts_+1}\n\tData:`,
             this.data_);
 
-        this.delete_();
+        if (!opt_data) {
+            // success() was called with no arguments. Just finish up.
+            return this.delete_();
+        }
+
+        // opt_data was provided ==> we need to schedule another task.
+
+        var isSameQueue = !opt_queueName || (opt_queueName === this.config_.name);
+        if (isSameQueue && opt_Id === this.id) {
+            // Same ID as current task. Easiest way: update current task.
+            log(`${this.config_.name}: Scheduling repeat task ID=${this.id_}`, opt_data);
+            return this.update(opt_data, opt_dueAt);
+        }
+
+        // It's a new task. Tell the queue to schedule it and delete us at the same time.
+        var q = Registry.get(/** @type {string} */(opt_queueName));
+        return q.scheduleTask(opt_data, opt_dueAt, opt_Id, true, this);
     }
 
 
@@ -183,7 +213,14 @@ class Task {
 
         // Update the task data. The effect is to reschedule it for later because we changed the
         // DUE_AT timestamp.
-        return this.update(opt_data, dueAt, attempts, error);
+        log(`${this.config_.name}: Rescheduling task ID=${this.id_}`, opt_data);
+        var self = this;
+        return this.update(opt_data, dueAt, attempts, error).
+            catch(function(err) {
+                log(`${self.config_.name}: Rescheduling failed - it will eventually be reprocessed ID=${self.id_}`,
+                    err);
+                throw err;
+            });
     }
 
 
@@ -232,26 +269,59 @@ class Task {
         // Add our special fields to the data.
         this.addSpecialProperties_(data, opt_dueAt, opt_attempts, opt_error);
 
-        // Say what we're about to do.
-        var name = this.config_.name;
-        var id = this.id_;
-        if (!opt_attempts) {
-            log(`${name}: Scheduling task ID=${id}`, data);
-        } else {
-            log(`${name}: Rescheduling task ID=${id}`, data);
-        }
-
         // If the task exists already, modify it and leave it in the queue. This will trigger a
         // child_changed event if the task stays within the query window. Otherwise it will trigger
         // when the task comes back in the window.
+        var name = this.config_.name;
+        var id = this.id_;
         var self = this;
         return new Promise(function(resolve, reject) {
             self.config_.ref.child(self.id_).update(data, function(/**Error*/err) {
                 if (!err) {
-                    log(`${name}: Task rescheduled ID=${id}`, data);
+                    log(`${name}: Task scheduled ID=${id}`, data);
                     resolve(self.id_);
                 } else {
-                    log(`${name}: Failed to reschedule task. It will eventually be reprocessed ID=${id}`,
+                    log(`${name}: Failed to schedule task ID=${id}`, data, err);
+                    reject(err);
+                }
+            });
+        });
+    }
+
+
+    /**
+     * Update or save the current task, and delete another task in the same atomic operation.
+     *
+     * @param {!Task} task
+     * @return {!Promise<string,Error>}
+     */
+    updateAndDelete(task) {
+
+        // Clone our internal data so we don't corrupt it.
+        var data = Object.assign({}, this.data_);
+
+        // Add our special fields to the data.
+        this.addSpecialProperties_(data);
+
+        // Prepare the atomic update.
+        var atomicData = {
+            [this.getRelativePath_()]: data,
+            [task.getRelativePath_()]: null
+        }
+
+        // Say what we're about to do.
+        log(`${this.config_.name}: Scheduling task ID=${this.id_} ...`, data);
+        log(`${task.config_.name}: Deleting task ID=${task.id_} ...`, data);
+
+        var self = this;
+        return new Promise(function(resolve, reject) {
+            self.config_.ref.root().update(atomicData, function(/**Error*/err) {
+                if (!err) {
+                    log(`${self.config_.name}: Task scheduled ID=${self.id_}`, data);
+                    log(`${task.config_.name}: Task deleted ID=${task.id_}`, task.data);
+                    resolve(self.id_);
+                } else {
+                    log(`${self.config_.name}: Failed to schedule task. ID=${self.id_}`,
                         data, err);
                     reject(err);
                 }
@@ -440,6 +510,21 @@ class Task {
                     return false;
             }
         }
+    }
+
+
+    /**
+     * Returns the relative path of this task from the root of the Firebase.
+     *
+     * @return {string}
+     * @private
+     */
+    getRelativePath_() {
+
+        var fullPath = this.config_.ref.child(this.id_).toString();
+        var rootPath = this.config_.ref.root().toString();
+
+        return fullPath.slice(rootPath.length);
     }
 }
 

@@ -1,6 +1,7 @@
 'use strict';
 
 
+var Registry = require('./registry');
 var Config = require('./config');
 var Worker = require('./worker');
 var Task = require('./task').Task;
@@ -29,7 +30,7 @@ class Queue {
         this.name_ = name;
 
         // Register the queue for use with just its name.
-        Queue.registerQueue_(this);
+        Registry.register(this);
 
         /**
          * Create a config instance that we can pass around.
@@ -56,7 +57,7 @@ class Queue {
         this.worker_.dispose();
         this.worker_ = null;
         this.config_ = null;
-        Queue.unregisterQueue_(this);
+        Registry.unregister(this);
 
         log(this.name_ + ': Disposed queue instance');
     }
@@ -107,15 +108,17 @@ class Queue {
      * @param {Date|number=} opt_when When to try to process the task (not before).
      * @param {string=} opt_Id The ID to assign the new task. This is not necessary, but can be
      *      used to prevent duplicate tasks being created.
-     * @param {boolean=} opt_replace If an ID was specified, whether this task replaces an existing one
-     *      with the same ID. Default: false. If true, an existing task may be overwritten with the new
-     *      task, an no error will be returned.
+     * @param {boolean=} opt_replace If an ID was specified, whether this task replaces an existing
+     *      one with the same ID. Default: false. If true, an existing task may be overwritten with
+     *      the new task, an no error will be returned.
+     * @param {Task=} opt_taskToDelete_ For internal use only. The task that should be deleted at
+     *      the same time the new task is created.
      * @return {!Promise<string,(Error|DuplicateIdError)>} which resolves to the ID of the
      *      newly created task if successful or is rejected if not. If rejected because opt_Id was
-     *      specified and a task with the same ID already exists, the rejected value will be an error of
-     *      the type Queue.DuplicateIdError.
+     *      specified and a task with the same ID already exists, the rejected value will be an
+     *      error of the type DuplicateIdError.
      */
-    scheduleTask(data, opt_when, opt_Id, opt_replace) {
+    scheduleTask(data, opt_when, opt_Id, opt_replace, opt_taskToDelete_) {
 
         // Generate an ID if not specified.
         var id = opt_Id || this.config_.ref.push().key();
@@ -133,52 +136,13 @@ class Queue {
 
         var task = new Task(id, data, this.config_, /**@type {number}*/(opt_when));
         if (!opt_Id || opt_Id && opt_replace) {
-            return task.update();
+            if (!opt_taskToDelete_) {
+                return task.update();
+            }
+            return task.updateAndDelete(opt_taskToDelete_);
         } else {
             return task.saveIfUnique();
         }
-    }
-
-
-    /**
-     * Registers a queue. Throws an exception if a duplicate is being created.
-     *
-     * @param {!Queue} queue
-     * @private
-     */
-    static registerQueue_(queue) {
-
-        var name = queue.name;
-        if (!Queue.get(name)) {
-            Queue.instances_[name] = queue;
-        } else {
-            throw new Error('A queue with that name already exists');
-        }
-    }
-
-
-    /**
-     * Removes a queue from the registry. No error is thrown if the queue did not exist.
-     *
-     * @param {!Queue} queue
-     * @private
-     */
-    static unregisterQueue_(queue) {
-
-        var name = queue.name;
-        delete Queue.instances_[name];
-    }
-
-
-    /**
-     * Returns the instance of the named queue.
-     *
-     * @param {string} name The name of the queue.
-     * @return {!Queue|undefined}
-     */
-    static get(name) {
-
-        return Queue.instances_[name];
     }
 
 
@@ -200,7 +164,7 @@ class Queue {
      */
     static scheduleTask(queueName, data, opt_when, opt_taskId, opt_replace) {
 
-        var q = Queue.get(queueName);
+        var q = Registry.get(queueName);
         if (q) {
             return q.scheduleTask(data, opt_when, opt_taskId, opt_replace);
         } else {
@@ -231,7 +195,7 @@ class Queue {
         var q;
         if (typeof queueRefOrName === 'string') {
 
-            q = Queue.get(queueRefOrName);
+            q = Registry.get(queueRefOrName);
             if (!q) {
                 return Promise.reject(new Error('No such queue'));
             }
@@ -239,7 +203,7 @@ class Queue {
         } else if (queueRefOrName instanceof Firebase) {
 
             var name = queueRefOrName.key();
-            q = Queue.get(name);
+            q = Registry.get(name);
             if (!q) {
                 q = new Queue(name, queueRefOrName);
             }
@@ -270,20 +234,12 @@ class Queue {
      */
     static disposeAll() {
 
-        for (var name in Queue.instances_) {
-            Queue.instances_[name].dispose();
+        var names = Registry.getNames();
+        for (var i=0; i<names.length; i++) {
+            Registry.get(names[i]).dispose(); // each queue will self-unregister.
         }
     }
 }
-
-
-/**
- * A registry of all queue instances.
- *
- * @type {!Object<string,!Queue>}
- * @private
- */
-Queue.instances_ = {}
 
 
 module.exports = Queue;

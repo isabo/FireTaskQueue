@@ -4,9 +4,10 @@ early stages of developing apps that need a queue, but which could do without th
 introducing a separate queue service such as RabbitMQ at an early stage.
 
 ## Features
-- You can schedule tasks to be performed ASAP or at a specific time in the future.
+- Tasks can be submitted for immediate execution or scheduled for a specific time in the future.
 - Tasks that fail are automatically retried at exponentially increasing intervals.
 - You can define multiple queues, each with its own configuration and tasks.
+- Pipelining: a task can complete and launch another task in one atomic operation.
 
 ## FYI
 - A task is an object that holds information that is meaningful to your app. The object's properties
@@ -193,12 +194,12 @@ FireTaskQueue assumes that your callback performs asynchronously. Therefore, you
 processing is complete, using any of the following:
 - **Call *task.success()* or *task.fail()*.** The value that you provide to *fail()* will be
   stored in the task for debugging purposes.
-- **Return a promise.** Processing is considered complete when the promise is fulfilled. If the promise
-  is resolved, the task is considered to have been processed successfully and will be deleted. If
-  the promise is rejected, the task is considered to have failed and will be retried. The value with
-  which the promise is rejected will be stored in the task for debugging purposes.
-- **Throw an exception, or allow one to be thrown**, so that the callback fails immediately. The task
-  will be considered to have failed and will be retried. The details of the exception will be
+- **Return a promise.** Processing is considered complete when the promise is fulfilled. If the
+  promise is resolved, the task is considered to have been processed successfully and will be
+  deleted. If the promise is rejected, the task is considered to have failed and will be retried.
+  The value with which the promise is rejected will be stored in the task for debugging purposes.
+- **Throw an exception, or allow one to be thrown**, so that the callback fails immediately. The
+  task will be considered to have failed and will be retried. The details of the exception will be
   stored in the task for debugging purposes.
 
 
@@ -261,16 +262,14 @@ This is the static form of `q.start()`.
 ##### Indicate that Processing is Complete
 FireTaskQueue assumes that your callback performs asynchronously. Therefore, you must indicate when
 processing is complete, using any of the following:
-- **Call *done()*.** If called with no arguments, the task is considered to have been processed
-  successfully and will be deleted. If called with anything except null or undefined, the task is
-  considered to have failed, and will be retried. The value that you provide to *done()* will be
+- **Call *task.success()* or *task.fail()*.** The value that you provide to *fail()* will be
   stored in the task for debugging purposes.
-- **Return a promise.** Processing is considered complete when the promise is fulfilled. If the promise
-  is resolved, the task is considered to have been processed successfully and will be deleted. If
-  the promise is rejected, the task is considered to have failed and will be retried. The value with
-  which the promise is rejected will be stored in the task for debugging purposes.
-- **Throw an exception, or allow one to be thrown**, so that the callback fails immediately. The task
-  will be considered to have failed and will be retried. The details of the exception will be
+- **Return a promise.** Processing is considered complete when the promise is fulfilled. If the
+  promise is resolved, the task is considered to have been processed successfully and will be
+  deleted. If the promise is rejected, the task is considered to have failed and will be retried.
+  The value with which the promise is rejected will be stored in the task for debugging purposes.
+- **Throw an exception, or allow one to be thrown**, so that the callback fails immediately. The
+  task will be considered to have failed and will be retried. The details of the exception will be
   stored in the task for debugging purposes.
 
 
@@ -305,8 +304,20 @@ The reason for the last failure. This is from one of these possibilities:
 2. The value with which the promise returned by a previous invocation was rejected.
 3. The error which was thrown by a previous invocation.
 
-#### task.success()
+#### task.success([queueName, taskData, [dueAt, [taskId]]])
 Call this to indicate that the task has been processed successfully.
+If arguments are supplied, a new task will be scheduled in a single atomic operation with completing
+the current task.
+##### Arguments
+| Name | Type | Description |
+|------|------|-------------|
+| queueName | string | The name of the queue on which to create the new task. If undefined, it will be the same queue as the current task.|
+| taskData | Object | An object containing data that represents some work that needs to be done. |
+| [dueAt]   | Number | Optional. A numeric timestamp that indicates the earliest time the task should be processed. |
+| [taskId] | string | Optional. Allows you to specify your own ID for the task. Use this if you need to prevent redundant tasks from being created by logic that does not know if a task was already created elsewhere in the app. |
+
+Note that if you supply `taskId`, the new task will automatically replace an existing task which has
+the same ID.
 
 #### task.fail(reason, [data])
 Call this to indicate that the task was not processed, and should be retried.
