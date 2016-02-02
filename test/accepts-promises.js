@@ -15,11 +15,11 @@ function acceptsPromises() {
 
     // Generate a random key to use for the queue, so that we're not using leftovers of previous failed
     // tests.
-    var queueKey = 'test-return-promises-' + util.ref.push().key();
+    var queueKey = 'test-return-promises' + util.ref.push().key();
     var qRef = util.ref.child(queueKey);
 
     var q = new FireTaskQueue('ReturnPromises', qRef);
-    q.schedule({});
+    q.scheduleTask({});
 
     return util.testP('Accepts promise as return value', function(t) {
 
@@ -30,16 +30,16 @@ function acceptsPromises() {
             // A flag.
             var itFailed = false;
 
-            q.monitor(function(id, task, done) {
+            q.start(function(task) {
 
                 // This should only be entered once, because the task is supposed to succeed.
 
-                if (task._attempts) {
+                if (task.attempts) {
                     // This is a retry. This means the promise returned by the first attempt was not
                     // understood.
                     itFailed = true;
                     t.fail('The task was re-attempted - returning a promise, then resolving it, failed');
-                    done(); // Use the non-promise way to stop the task.
+                    task.success(); // Use the non-promise way to stop the task.
                     rejectTest(); // Signify to test harness that we failed.
                     return;
                 }
@@ -84,11 +84,11 @@ function handlesRejectedPromises() {
 
     // Generate a random key to use for the queue, so that we're not using leftovers of previous failed
     // tests.
-    var queueKey = 'test-rejected-promises-' + util.ref.push().key();
+    var queueKey = 'test-rejected-promises' + util.ref.push().key();
     var qRef = util.ref.child(queueKey);
 
     var q = new FireTaskQueue('RejectedPromises', qRef);
-    q.schedule({});
+    q.scheduleTask({});
 
     return util.testP('Treats a rejected promise as a task failure', function(t) {
 
@@ -96,14 +96,14 @@ function handlesRejectedPromises() {
         // settle before continuing to the next test or exiting the test session.
         return new Promise(function(resolveTest, rejectTest) {
 
-            q.monitor(function(id, task, done) {
+            q.start(function(task) {
 
                 // This should be entered twice: once when we fail the task and then a retry.
 
-                if (task._attempts) {
+                if (task.attempts) {
                     // This is a retry. Exactly what we expect.
                     t.pass('The task was re-attempted - returning a promise, then rejecting it, succeeded');
-                    done(); // Use the non-promise way to stop the task.
+                    task.success(); // Use the non-promise way to stop the task.
                     resolveTest(); // Signify to test harness that we succeeded.
                     return;
                 }

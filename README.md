@@ -3,16 +3,21 @@ A basic task queue for Node.js apps that use Firebase. I built it to make things
 early stages of developing apps that need a queue, but which could do without the complication of
 introducing a separate queue service such as RabbitMQ at an early stage.
 
-## Principles
+## Features
+- Tasks can be submitted for immediate execution or scheduled for a specific time in the future.
+- Tasks that fail are automatically retried at exponentially increasing intervals.
+- You can define multiple queues, each with its own configuration and tasks.
+- Pipelining: a task can complete and launch another task in one atomic operation.
+
+## FYI
 - A task is an object that holds information that is meaningful to your app. The object's properties
   and values must be compatible with what Firebase supports, i.e., values must be primitives.
 - Tasks can be submitted for immediate execution or for execution at a specific time (i.e. delayed
   execution).
 - Tasks are not guaranteed to be processed in the order they were submitted, but that is the general
   intention.
-- If a task fails, it will be retried at exponentially increasing intervals up to 1 hour.
-- Tasks cannot have multiple user-defined statuses. They are either in the queue, i.e. not yet
-  processed, or are not in the queue, i.e. processed successfully then deleted.
+- If a task fails, it will be retried at exponentially increasing intervals up to a default of 1
+  hour.
 - It is possible, though unlikely, that a task will be executed more than once. Make your handlers
   idempotent.
 - You can define multiple named queues. They each need their own FireTaskQueue instance to process
@@ -44,7 +49,7 @@ var taskData = {
     b: 'two'
 };
 
-q.schedule(taskData).
+q.scheduleTask(taskData).
     then(function(taskId) {
         // Task has been successfully scheduled.
     }, function(err) {
@@ -52,27 +57,27 @@ q.schedule(taskData).
     });
 
 // Schedule a task for execution in 1 minute.
-q.schedule(taskData, Date.now() + 60000).
+q.scheduleTask(taskData, Date.now() + 60000).
     then(...);
 
 // Alternatively, there's a static method:
-FireTaskQueue.schedule('my_queue', {...task data...}, optionalDateOrTimestamp);
+FireTaskQueue.scheduleTask('my_queue', {...task data...}, optionalDateOrTimestamp);
 ```
 
-### Monitor and Process Tasks
+### Process Tasks
 ```js
-q.monitor(function(taskId, taskData, done) {
-    console.log('Processing ' + taskId);
+q.start(function(task) {
+    console.log('Processing ' + task.id);
 
-    // You can even do something asynchronous, as long as you remember to call done(), or return
+    // You can even do something asynchronous, as long as you remember to call success(), or return
     // a promise which when fulfilled, indicates the end of the processing for that task.
     setTimeout(function() {
-        done();
+        task.success();
     }, 500);
 });
 
 // Alternatively, there's a static method:
-FireTaskQueue.monitor('my_queue', function(taskId, taskData, done){...});
+FireTaskQueue.start('my_queue', function(task){...});
 ```
 
 ### Clean up before shutting down
@@ -151,7 +156,7 @@ Creates a new queue instance.
 
 
 
-#### q.schedule(taskData, [when, [taskId, [replace]]])
+#### q.scheduleTask(taskData, [when, [taskId, [replace]]])
 
 Schedules a task for processing.
 
@@ -171,15 +176,15 @@ undefined, the error will be of type `FireTaskQueue.DuplicateIdError`.
 
 
 
-#### q.monitor(callback, [parallelCount, [maxBackOff, [minBackOff]]])
+#### q.start(callback, [parallelCount, [maxBackOff, [minBackOff]]])
 
 Registers a callback function that will be called for each task in the queue at the appropriate time.
-Currently, multiple monitors are not supported so dan't call this more than once per queue instance.
+Currently, multiple workers are not supported so don't call this more than once per queue instance.
 
 ##### Arguments
 | Name | Type | Description |
 |------|------|-------------|
-| callback | function(taskId, taskData, done) | A function that knows how to process a task that was scheduled. The function should accept the following arguments: *taskId* (a string), *taskData* (an Object), and *done* (a function). See below for usage of *done()*. |
+| callback | function(task) | A function that knows how to process a task that was scheduled. The function should accept a Task instance (see below). It can also return a Promise, which will determine whether the task is seen to be successful or is retried (see below).|
 | [parallelCount] | number | Optional. The number of tasks that are allowed execute in parallel. |
 | [maxBackOff] | number | Optional. The maximum interval, in microseconds, between retry attempts of failed tasks.|
 | [minBackOff] | number | Optional. The minimum interval, in microseconds, between retry attempts of failed tasks.|
@@ -187,16 +192,14 @@ Currently, multiple monitors are not supported so dan't call this more than once
 ##### Indicate that Processing is Complete
 FireTaskQueue assumes that your callback performs asynchronously. Therefore, you must indicate when
 processing is complete, using any of the following:
-- **Call *done()*.** If called with no arguments, the task is considered to have been processed
-  successfully and will be deleted. If called with anything except null or undefined, the task is
-  considered to have failed, and will be retried. The value that you provide to *done()* will be
+- **Call *task.success()* or *task.fail()*.** The value that you provide to *fail()* will be
   stored in the task for debugging purposes.
-- **Return a promise.** Processing is considered complete when the promise is fulfilled. If the promise
-  is resolved, the task is considered to have been processed successfully and will be deleted. If
-  the promise is rejected, the task is considered to have failed and will be retried. The value with
-  which the promise is rejected will be stored in the task for debugging purposes.
-- **Throw an exception, or allow one to be thrown**, so that the callback fails immediately. The task
-  will be considered to have failed and will be retried. The details of the exception will be
+- **Return a promise.** Processing is considered complete when the promise is fulfilled. If the
+  promise is resolved, the task is considered to have been processed successfully and will be
+  deleted. If the promise is rejected, the task is considered to have failed and will be retried.
+  The value with which the promise is rejected will be stored in the task for debugging purposes.
+- **Throw an exception, or allow one to be thrown**, so that the callback fails immediately. The
+  task will be considered to have failed and will be retried. The details of the exception will be
   stored in the task for debugging purposes.
 
 
@@ -208,17 +211,10 @@ The unprocessed tasks remain in Firebase.
 
 
 
-#### FireTaskQueue.DuplicateIdError
-
-This error is the rejected value when `schedule()` fails because there is already a task with the
-specified ID.
-
-
-
-#### FireTaskQueue.schedule(queueName, taskData, [when, [taskId, [replace]]])
+#### FireTaskQueue.scheduleTask(queueName, taskData, [when, [taskId, [replace]]])
 
 Schedules a task for processing.
-The static form of `q.schedule()`.
+The static form of `q.scheduleTask()`.
 
 ##### Arguments
 | Name | Type | Description |
@@ -248,11 +244,11 @@ Returns the instance of the named queue, if it exists. Otherwise: undefined.
 
 
 
-#### FireTaskQueue.monitor(queueRefOrName, callback, [parallelCount, [maxBackOff, [minBackOff]]])
+#### FireTaskQueue.start(queueRefOrName, callback, [parallelCount, [maxBackOff, [minBackOff]]])
 
 Registers a callback function that will be called for each task in the queue at the appropriate time.
 Currently, multiple monitors are not supported so dan't call this more than once per queue instance.
-This is the static form of `q.monitor()`.
+This is the static form of `q.start()`.
 
 ##### Arguments
 | Name | Type | Description |
@@ -266,16 +262,14 @@ This is the static form of `q.monitor()`.
 ##### Indicate that Processing is Complete
 FireTaskQueue assumes that your callback performs asynchronously. Therefore, you must indicate when
 processing is complete, using any of the following:
-- **Call *done()*.** If called with no arguments, the task is considered to have been processed
-  successfully and will be deleted. If called with anything except null or undefined, the task is
-  considered to have failed, and will be retried. The value that you provide to *done()* will be
+- **Call *task.success()* or *task.fail()*.** The value that you provide to *fail()* will be
   stored in the task for debugging purposes.
-- **Return a promise.** Processing is considered complete when the promise is fulfilled. If the promise
-  is resolved, the task is considered to have been processed successfully and will be deleted. If
-  the promise is rejected, the task is considered to have failed and will be retried. The value with
-  which the promise is rejected will be stored in the task for debugging purposes.
-- **Throw an exception, or allow one to be thrown**, so that the callback fails immediately. The task
-  will be considered to have failed and will be retried. The details of the exception will be
+- **Return a promise.** Processing is considered complete when the promise is fulfilled. If the
+  promise is resolved, the task is considered to have been processed successfully and will be
+  deleted. If the promise is rejected, the task is considered to have failed and will be retried.
+  The value with which the promise is rejected will be stored in the task for debugging purposes.
+- **Throw an exception, or allow one to be thrown**, so that the callback fails immediately. The
+  task will be considered to have failed and will be retried. The details of the exception will be
   stored in the task for debugging purposes.
 
 
@@ -285,6 +279,60 @@ processing is complete, using any of the following:
 Stops monitoring all queues and releases the memory used by the queues.
 The unprocessed tasks remain in Firebase.
 Call this when shutting down.
+
+
+
+### FireTaskQueue.Task
+
+A Task instance is passed to the processing function.
+
+#### task.id
+The ID of the task.
+
+#### task.data
+The data with which the task was scheduled.
+
+#### task.dueAt
+The UTC timestamp at which the task was scheduled to be executed.
+
+#### task.attempts
+The number of previous (failed) attempts to execute the task.
+
+#### task.lastFailureReason
+The reason for the last failure. This is from one of these possibilities:
+1. The value passed to `task.fail()` by a previous invocation.
+2. The value with which the promise returned by a previous invocation was rejected.
+3. The error which was thrown by a previous invocation.
+
+#### task.success([queueName, taskData, [dueAt, [taskId]]])
+Call this to indicate that the task has been processed successfully.
+If arguments are supplied, a new task will be scheduled in a single atomic operation with completing
+the current task.
+##### Arguments
+| Name | Type | Description |
+|------|------|-------------|
+| queueName | string | The name of the queue on which to create the new task. If undefined, it will be the same queue as the current task.|
+| taskData | Object | An object containing data that represents some work that needs to be done. |
+| [dueAt]   | Number | Optional. A numeric timestamp that indicates the earliest time the task should be processed. |
+| [taskId] | string | Optional. Allows you to specify your own ID for the task. Use this if you need to prevent redundant tasks from being created by logic that does not know if a task was already created elsewhere in the app. |
+
+Note that if you supply `taskId`, the new task will automatically replace an existing task which has
+the same ID.
+
+#### task.fail(reason, [data])
+Call this to indicate that the task was not processed, and should be retried.
+##### Arguments
+| Name | Type | Description |
+|------|------|-------------|
+| reason | string, number, boolean, Object, Error | Something that indicates what went wrong. |
+| [data] | Object | Optional. If supplied, this data object will replace the original one. This allows state information to be saved so that the next attempt can pick up where this attempt left off.
+
+
+
+### FireTaskQueue.DuplicateIdError
+
+This error is the rejected value when `scheduleTask()` fails because there is already a task with
+the specified ID.
 
 
 
