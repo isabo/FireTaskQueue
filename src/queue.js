@@ -89,6 +89,10 @@ class Queue {
 
         this.config_.processorFn = fn;
 
+        if (opt_parallelCount) {
+            this.config_.parallelCount = opt_parallelCount;
+        }
+
         if (opt_maxBackOff) {
             this.config_.maxBackOff = opt_maxBackOff;
         }
